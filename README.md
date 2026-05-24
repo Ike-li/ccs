@@ -63,9 +63,14 @@ Base URL [https://api.moonshot.cn/anthropic]:
 Secret env (<-/->, Enter): ANTHROPIC_API_KEY  ANTHROPIC_AUTH_TOKEN
 Key for ANTHROPIC_API_KEY:
 Model (optional):
+Opus model (optional):
+Sonnet model (optional):
+Haiku model (optional):
 ```
 
 在支持 TTY 的终端里，`Secret env` 可以用左右方向键选择，当前项会显示为颜色块。大多数 provider 直接选 `ANTHROPIC_API_KEY`；需要 Bearer token 的 provider 选 `ANTHROPIC_AUTH_TOKEN`。key/token 只填一次。
+
+`Model` 写入 `ANTHROPIC_MODEL`，控制 Claude Code 启动时的会话默认模型。`Opus model`、`Sonnet model`、`Haiku model` 写入 `/model` 里 `opus`、`sonnet`、`haiku` alias 的默认映射。单模型 provider 可以先填 `Model`，后面三个一路回车；支持多模型的 provider 可以分别填写。
 
 切换 provider：
 
@@ -101,6 +106,9 @@ ccs use kimi --no-verify
 
 ```bash
 ccs set <name> --model claude-sonnet-4-6
+ccs set <name> --opus-model claude-opus-4-7
+ccs set <name> --sonnet-model claude-sonnet-4-6
+ccs set <name> --haiku-model claude-haiku-4-5
 ccs set <name> --unset-model
 ccs set <name> -e ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-4-6
 ccs set <name> --unset-env ANTHROPIC_DEFAULT_SONNET_MODEL
@@ -123,7 +131,11 @@ Auth token provider：
 ccs set kimi \
   --base-url https://api.moonshot.cn/anthropic \
   --key sk-... \
-  --use-auth-token
+  --use-auth-token \
+  --model kimi-k2.6 \
+  --opus-model kimi-k2.6 \
+  --sonnet-model kimi-k2.6 \
+  --haiku-model kimi-k2.6
 ```
 
 不想让 key 出现在 shell history，可以从 stdin 读取：
@@ -149,6 +161,9 @@ printf '%s\n' 'sk-...' | ccs set kimi \
     ANTHROPIC_API_KEY:     ...  # API key 模式
     ANTHROPIC_AUTH_TOKEN:  ...  # auth token 模式
     ANTHROPIC_MODEL:       ...  # 可选
+    ANTHROPIC_DEFAULT_OPUS_MODEL:    ...  # 可选，/model opus alias
+    ANTHROPIC_DEFAULT_SONNET_MODEL:  ...  # 可选，/model sonnet alias
+    ANTHROPIC_DEFAULT_HAIKU_MODEL:   ...  # 可选，/model haiku alias
 ```
 
 provider 文件是简单的 `KEY=value`：
@@ -158,6 +173,9 @@ auth=api_key
 key=sk-...
 ANTHROPIC_BASE_URL=https://api.example.com/anthropic
 ANTHROPIC_MODEL=claude-sonnet-4-6
+ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-7
+ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-4-6
+ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-haiku-4-5
 ```
 
 `ccs` 写入 settings 时会移除它管理的 `ANTHROPIC_*` 变量和旧的 `apiKeyHelper`，再写入当前 provider；其他顶层字段和非 ccs 管理的 `env` 会保留。
@@ -171,6 +189,8 @@ ANTHROPIC_MODEL=claude-sonnet-4-6
 - base URL 不通或超时
 
 `CCS_VERIFY_TIMEOUT` 可以调整超时秒数，默认 10 秒。
+
+探测模型优先使用 `ANTHROPIC_MODEL`，如果没配置，会依次使用 `ANTHROPIC_DEFAULT_OPUS_MODEL`、`ANTHROPIC_DEFAULT_SONNET_MODEL`、`ANTHROPIC_DEFAULT_HAIKU_MODEL`，最后才回退到内置 probe model。
 
 ## 安全语义
 

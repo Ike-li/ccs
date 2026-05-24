@@ -14,7 +14,7 @@ ENV_AUTH_TOKEN=ANTHROPIC_AUTH_TOKEN
 VERIFY_TIMEOUT=${CCS_VERIFY_TIMEOUT:-10}
 VERIFY_PROBE_MODEL=${CCS_VERIFY_PROBE_MODEL:-claude-sonnet-4-6}
 
-PROVIDER_ENV_KEYS="ANTHROPIC_BASE_URL ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL_NAME ANTHROPIC_DEFAULT_SONNET_MODEL_NAME ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"
+PROVIDER_ENV_KEYS="ANTHROPIC_BASE_URL ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL_NAME ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES ANTHROPIC_DEFAULT_SONNET_MODEL_NAME ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES ANTHROPIC_CUSTOM_MODEL_OPTION ANTHROPIC_CUSTOM_MODEL_OPTION_NAME ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION ANTHROPIC_CUSTOM_MODEL_OPTION_SUPPORTED_CAPABILITIES"
 MANAGED_ENV_KEYS="$PROVIDER_ENV_KEYS $ENV_API_KEY $ENV_AUTH_TOKEN"
 FATAL_PROVIDER_ERROR_TYPES="authentication_error invalid_api_key model_not_found not_found_error permission_error"
 
@@ -40,7 +40,8 @@ ccs - Claude Code provider switcher
 Usage:
   ccs init
   ccs set [name] [--base-url URL] [--key KEY] [--use-api-key|--use-auth-token]
-                 [--model M] [--unset-model] [-e K=V] [--unset-env K]
+                 [--model M] [--opus-model M] [--sonnet-model M] [--haiku-model M]
+                 [--unset-model] [-e K=V] [--unset-env K]
   ccs use <name> [--no-verify]
   ccs verify [name]
   ccs ls
@@ -62,6 +63,9 @@ Options:
   --use-api-key         write --key to ANTHROPIC_API_KEY
   --use-auth-token      write --key to ANTHROPIC_AUTH_TOKEN
   --model M             ANTHROPIC_MODEL override
+  --opus-model M        ANTHROPIC_DEFAULT_OPUS_MODEL alias mapping
+  --sonnet-model M      ANTHROPIC_DEFAULT_SONNET_MODEL alias mapping
+  --haiku-model M       ANTHROPIC_DEFAULT_HAIKU_MODEL alias mapping
   --unset-model         remove ANTHROPIC_MODEL
   -e, --env K=V         extra ANTHROPIC_* env
   --unset-env K         remove an ANTHROPIC_* env key
@@ -202,9 +206,19 @@ write_provider() {
                 order[4] = "ANTHROPIC_DEFAULT_SONNET_MODEL"
                 order[5] = "ANTHROPIC_DEFAULT_HAIKU_MODEL"
                 order[6] = "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"
-                order[7] = "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"
-                order[8] = "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"
-                for (i = 1; i <= 8; i++) {
+                order[7] = "ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION"
+                order[8] = "ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES"
+                order[9] = "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"
+                order[10] = "ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION"
+                order[11] = "ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES"
+                order[12] = "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"
+                order[13] = "ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION"
+                order[14] = "ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES"
+                order[15] = "ANTHROPIC_CUSTOM_MODEL_OPTION"
+                order[16] = "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME"
+                order[17] = "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION"
+                order[18] = "ANTHROPIC_CUSTOM_MODEL_OPTION_SUPPORTED_CAPABILITIES"
+                for (i = 1; i <= 18; i++) {
                     key = order[i]
                     if (key in values) print key "=" values[key]
                 }
@@ -595,6 +609,9 @@ cmd_set() {
     key_arg=
     auth_flag=
     model=
+    opus_model=
+    sonnet_model=
+    haiku_model=
     unset_model=0
     options_provided=0
     env_updates=$(mktemp "${TMPDIR:-/tmp}/ccs-env-updates.XXXXXX") || exit 1
@@ -638,6 +655,24 @@ cmd_set() {
             --model)
                 [ "$#" -ge 2 ] || die "--model requires a value"
                 model=$2
+                options_provided=1
+                shift 2
+                ;;
+            --opus-model)
+                [ "$#" -ge 2 ] || die "--opus-model requires a value"
+                opus_model=$2
+                options_provided=1
+                shift 2
+                ;;
+            --sonnet-model)
+                [ "$#" -ge 2 ] || die "--sonnet-model requires a value"
+                sonnet_model=$2
+                options_provided=1
+                shift 2
+                ;;
+            --haiku-model)
+                [ "$#" -ge 2 ] || die "--haiku-model requires a value"
+                haiku_model=$2
                 options_provided=1
                 shift 2
                 ;;
@@ -693,6 +728,9 @@ cmd_set() {
     current_key=$(conf_get "$file" key)
     current_base_url=$(env_file_get "$env_tmp" ANTHROPIC_BASE_URL)
     current_model=$(env_file_get "$env_tmp" ANTHROPIC_MODEL)
+    current_opus_model=$(env_file_get "$env_tmp" ANTHROPIC_DEFAULT_OPUS_MODEL)
+    current_sonnet_model=$(env_file_get "$env_tmp" ANTHROPIC_DEFAULT_SONNET_MODEL)
+    current_haiku_model=$(env_file_get "$env_tmp" ANTHROPIC_DEFAULT_HAIKU_MODEL)
 
     auth=$current_auth
     [ -n "$auth_flag" ] && auth=$auth_flag
@@ -707,6 +745,15 @@ cmd_set() {
             key_arg=$(prompt_optional "Key for $env_name (enter to keep current $(masked_key "$current_key"))" "" 1)
         fi
         model=$(prompt_optional "Model (optional)" "$current_model" 0)
+        opus_default=$current_opus_model
+        [ -n "$opus_default" ] || opus_default=$model
+        opus_model=$(prompt_optional "Opus model (optional)" "$opus_default" 0)
+        sonnet_default=$current_sonnet_model
+        [ -n "$sonnet_default" ] || sonnet_default=$model
+        sonnet_model=$(prompt_optional "Sonnet model (optional)" "$sonnet_default" 0)
+        haiku_default=$current_haiku_model
+        [ -n "$haiku_default" ] || haiku_default=$model
+        haiku_model=$(prompt_optional "Haiku model (optional)" "$haiku_default" 0)
     elif [ "$created" -eq 1 ]; then
         [ -n "$base_url" ] || base_url=$(prompt_required "Base URL")
         if [ -z "$key_arg" ]; then
@@ -734,6 +781,15 @@ cmd_set() {
     fi
     if [ -n "$model" ]; then
         env_file_set "$env_tmp" ANTHROPIC_MODEL "$model"
+    fi
+    if [ -n "$opus_model" ]; then
+        env_file_set "$env_tmp" ANTHROPIC_DEFAULT_OPUS_MODEL "$opus_model"
+    fi
+    if [ -n "$sonnet_model" ]; then
+        env_file_set "$env_tmp" ANTHROPIC_DEFAULT_SONNET_MODEL "$sonnet_model"
+    fi
+    if [ -n "$haiku_model" ]; then
+        env_file_set "$env_tmp" ANTHROPIC_DEFAULT_HAIKU_MODEL "$haiku_model"
     fi
     while IFS= read -r line; do
         [ -n "$line" ] || continue
@@ -822,6 +878,23 @@ verify_request() {
     esac
 }
 
+probe_model() {
+    provider_path=$1
+    for model_key in \
+        ANTHROPIC_MODEL \
+        ANTHROPIC_DEFAULT_OPUS_MODEL \
+        ANTHROPIC_DEFAULT_SONNET_MODEL \
+        ANTHROPIC_DEFAULT_HAIKU_MODEL
+    do
+        model_value=$(conf_get "$provider_path" "$model_key")
+        if [ -n "$model_value" ]; then
+            printf '%s' "$model_value"
+            return 0
+        fi
+    done
+    printf '%s' "$VERIFY_PROBE_MODEL"
+}
+
 cmd_use() {
     [ "$#" -ge 1 ] || die "provider name is required"
     name=$1
@@ -840,8 +913,7 @@ cmd_use() {
     [ -n "$auth" ] || auth=$AUTH_API_KEY
     key=$(conf_get "$file" key)
     base_url=$(conf_get "$file" ANTHROPIC_BASE_URL)
-    model=$(conf_get "$file" ANTHROPIC_MODEL)
-    [ -n "$model" ] || model=$VERIFY_PROBE_MODEL
+    model=$(probe_model "$file")
 
     if [ "$no_verify" -eq 0 ]; then
         msg=$(verify_request "$base_url" "$key" "$model" "$auth") || {
@@ -873,8 +945,7 @@ cmd_verify() {
     [ -n "$auth" ] || auth=$AUTH_API_KEY
     key=$(conf_get "$file" key)
     base_url=$(conf_get "$file" ANTHROPIC_BASE_URL)
-    model=$(conf_get "$file" ANTHROPIC_MODEL)
-    [ -n "$model" ] || model=$VERIFY_PROBE_MODEL
+    model=$(probe_model "$file")
     msg=$(verify_request "$base_url" "$key" "$model" "$auth") || {
         printf '%s: %s\n' "$name" "$msg"
         exit 1

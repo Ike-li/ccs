@@ -178,6 +178,16 @@ def test_set_updates_active_provider_and_reapplies_settings(_isolate_home):
         "--use-auth-token",
         "--model",
         "claude-sonnet-4-6",
+        "--opus-model",
+        "claude-opus-4-7",
+        "--sonnet-model",
+        "claude-sonnet-4-6",
+        "--haiku-model",
+        "claude-haiku-4-5",
+        "-e",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION=Opus through provider",
+        "-e",
+        "ANTHROPIC_CUSTOM_MODEL_OPTION=provider-custom-model",
     )
 
     conf = provider_conf(_isolate_home, "k")
@@ -185,9 +195,19 @@ def test_set_updates_active_provider_and_reapplies_settings(_isolate_home):
     assert "active reapplied" in result.stdout
     assert conf["auth"] == "auth_token"
     assert conf["ANTHROPIC_MODEL"] == "claude-sonnet-4-6"
+    assert conf["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "claude-opus-4-7"
+    assert conf["ANTHROPIC_DEFAULT_SONNET_MODEL"] == "claude-sonnet-4-6"
+    assert conf["ANTHROPIC_DEFAULT_HAIKU_MODEL"] == "claude-haiku-4-5"
+    assert conf["ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION"] == "Opus through provider"
+    assert conf["ANTHROPIC_CUSTOM_MODEL_OPTION"] == "provider-custom-model"
     assert data["env"]["ANTHROPIC_BASE_URL"] == "https://new.example"
     assert data["env"]["ANTHROPIC_AUTH_TOKEN"] == "sk-new"
     assert data["env"]["ANTHROPIC_MODEL"] == "claude-sonnet-4-6"
+    assert data["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "claude-opus-4-7"
+    assert data["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"] == "claude-sonnet-4-6"
+    assert data["env"]["ANTHROPIC_DEFAULT_HAIKU_MODEL"] == "claude-haiku-4-5"
+    assert data["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION"] == "Opus through provider"
+    assert data["env"]["ANTHROPIC_CUSTOM_MODEL_OPTION"] == "provider-custom-model"
     assert "ANTHROPIC_API_KEY" not in data["env"]
 
 
@@ -268,6 +288,9 @@ def test_set_help_uses_simple_auth_flags(_isolate_home):
 
     assert "--use-api-key" in result.stdout
     assert "--use-auth-token" in result.stdout
+    assert "--opus-model" in result.stdout
+    assert "--sonnet-model" in result.stdout
+    assert "--haiku-model" in result.stdout
     assert "--auth " not in result.stdout
     assert "api_key|auth_token" not in result.stdout
 
@@ -280,7 +303,11 @@ def test_set_rejects_conflicting_auth_flags(_isolate_home):
 
 
 def test_interactive_non_tty_fallback_prompts_one_by_one(_isolate_home):
-    result = run(_isolate_home, "set", input_text="k\nhttps://k.example\ny\nsk-X\nmodel-x\n")
+    result = run(
+        _isolate_home,
+        "set",
+        input_text="k\nhttps://k.example\ny\nsk-X\nmodel-x\nopus-x\nsonnet-x\nhaiku-x\n",
+    )
 
     conf = provider_conf(_isolate_home, "k")
     prompts = result.stderr
@@ -291,6 +318,21 @@ def test_interactive_non_tty_fallback_prompts_one_by_one(_isolate_home):
     assert conf["key"] == "sk-X"
     assert conf["ANTHROPIC_BASE_URL"] == "https://k.example"
     assert conf["ANTHROPIC_MODEL"] == "model-x"
+    assert conf["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "opus-x"
+    assert conf["ANTHROPIC_DEFAULT_SONNET_MODEL"] == "sonnet-x"
+    assert conf["ANTHROPIC_DEFAULT_HAIKU_MODEL"] == "haiku-x"
+
+
+def test_interactive_model_aliases_default_to_model(_isolate_home):
+    result = run(_isolate_home, "set", input_text="k\nhttps://k.example\n\nsk-X\nmodel-x\n\n\n\n")
+
+    conf = provider_conf(_isolate_home, "k")
+    assert result.returncode == 0
+    assert conf["auth"] == "api_key"
+    assert conf["ANTHROPIC_MODEL"] == "model-x"
+    assert conf["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "model-x"
+    assert conf["ANTHROPIC_DEFAULT_SONNET_MODEL"] == "model-x"
+    assert conf["ANTHROPIC_DEFAULT_HAIKU_MODEL"] == "model-x"
 
 
 def test_tty_auth_selector_accepts_arrow_keys(_isolate_home):
@@ -318,6 +360,12 @@ def test_tty_auth_selector_accepts_arrow_keys(_isolate_home):
         assert "\r\nKey for ANTHROPIC_AUTH_TOKEN" in key_prompt
         os.write(master_fd, b"sk-arrow\r")
         read_pty_until(master_fd, "Model (optional)")
+        os.write(master_fd, b"\r")
+        read_pty_until(master_fd, "Opus model (optional)")
+        os.write(master_fd, b"\r")
+        read_pty_until(master_fd, "Sonnet model (optional)")
+        os.write(master_fd, b"\r")
+        read_pty_until(master_fd, "Haiku model (optional)")
         os.write(master_fd, b"\r")
         read_pty_until(master_fd, "created arrow")
 
@@ -372,11 +420,23 @@ printf 200
     }
 
     run(_isolate_home, "init", env_extra=env_extra)
-    run(_isolate_home, "set", "api", "--base-url", "https://api.example", "--key", "sk-api", env_extra=env_extra)
+    run(
+        _isolate_home,
+        "set",
+        "api",
+        "--base-url",
+        "https://api.example",
+        "--key",
+        "sk-api",
+        "--opus-model",
+        "model-opus",
+        env_extra=env_extra,
+    )
     run(_isolate_home, "verify", "api", env_extra=env_extra)
     api_args = log_file.read_text()
     assert "x-api-key: sk-api" in api_args
     assert "Authorization: Bearer" not in api_args
+    assert '"model":"model-opus"' in api_args
 
     log_file.write_text("")
     run(
