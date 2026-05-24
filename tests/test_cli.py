@@ -153,6 +153,33 @@ def test_use_warns_about_opposite_secret_in_current_shell(_isolate_home):
     assert "shell-token" not in result.stderr
 
 
+def test_use_shell_mode_prints_eval_safe_cleanup(_isolate_home):
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "api", "--base-url", "https://api.example", "--key", "sk-api")
+
+    result = run(
+        _isolate_home,
+        "use",
+        "api",
+        "--no-verify",
+        "--shell",
+        env_extra={"ANTHROPIC_AUTH_TOKEN": "shell-token"},
+    )
+
+    data = settings(_isolate_home)
+    assert data["env"]["ANTHROPIC_API_KEY"] == "sk-api"
+    assert "switched -> api" not in result.stdout
+    assert "base_url:" not in result.stdout
+    assert "unset ANTHROPIC_API_KEY" in result.stdout
+    assert "unset ANTHROPIC_AUTH_TOKEN" in result.stdout
+    assert "unset ANTHROPIC_BASE_URL" in result.stdout
+    assert "switched -> api" in result.stderr
+    assert "Current shell cleanup commands were printed to stdout." in result.stderr
+    assert "current shell exports ANTHROPIC_AUTH_TOKEN" not in result.stderr
+    assert "shell-token" not in result.stdout
+    assert "shell-token" not in result.stderr
+
+
 def test_settings_json_preserves_unrelated_fields_and_env(_isolate_home):
     settings_file = _isolate_home / ".claude/settings.json"
     settings_file.parent.mkdir(parents=True)
@@ -313,6 +340,12 @@ def test_set_help_uses_simple_auth_flags(_isolate_home):
     assert "--haiku-model" in result.stdout
     assert "--auth " not in result.stdout
     assert "api_key|auth_token" not in result.stdout
+
+
+def test_top_level_help_mentions_shell_use_mode(_isolate_home):
+    result = run(_isolate_home, "--help")
+
+    assert "ccs use <name> [--no-verify] [--shell]" in result.stdout
 
 
 def test_set_rejects_conflicting_auth_flags(_isolate_home):

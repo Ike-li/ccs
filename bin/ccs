@@ -42,7 +42,7 @@ Usage:
   ccs set [name] [--base-url URL] [--key KEY] [--use-api-key|--use-auth-token]
                  [--model M] [--opus-model M] [--sonnet-model M] [--haiku-model M]
                  [--unset-model] [-e K=V] [--unset-env K]
-  ccs use <name> [--no-verify]
+  ccs use <name> [--no-verify] [--shell]
   ccs verify [name]
   ccs ls
   ccs current
@@ -912,14 +912,35 @@ warn_shell_secret_conflict() {
     printf 'warning: run: unset %s before starting Claude Code, or open a fresh shell.\n' "$other_env" >&2
 }
 
+print_shell_cleanup() {
+    seen=' '
+    for env_key in $MANAGED_ENV_KEYS; do
+        case "$seen" in
+            *" $env_key "*) continue ;;
+        esac
+        seen="$seen$env_key "
+        printf 'unset %s\n' "$env_key"
+    done
+}
+
+use_note() {
+    if [ "$use_shell" -eq 1 ]; then
+        printf '%s\n' "$1" >&2
+    else
+        printf '%s\n' "$1"
+    fi
+}
+
 cmd_use() {
     [ "$#" -ge 1 ] || die "provider name is required"
     name=$1
     shift
     no_verify=0
+    use_shell=0
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --no-verify) no_verify=1; shift ;;
+            --shell) use_shell=1; shift ;;
             *) die "unknown option: $1" ;;
         esac
     done
@@ -938,16 +959,21 @@ cmd_use() {
             printf 'Use --no-verify to switch anyway.\n'
             exit 1
         }
-        printf 'verify: %s\n' "$msg"
+        use_note "verify: $msg"
     fi
 
     printf '%s\n' "$name" >"$ACTIVE_FILE"
     chmod 600 "$ACTIVE_FILE" 2>/dev/null || true
     apply_provider "$name"
-    printf 'switched -> %s\n' "$name"
-    printf 'base_url: %s\n' "$base_url"
-    warn_shell_secret_conflict "$name" "$auth"
-    printf 'Restart Claude Code session to pick up the new provider.\n'
+    use_note "switched -> $name"
+    use_note "base_url: $base_url"
+    if [ "$use_shell" -eq 1 ]; then
+        print_shell_cleanup
+        use_note "Current shell cleanup commands were printed to stdout."
+    else
+        warn_shell_secret_conflict "$name" "$auth"
+        use_note "Restart Claude Code session to pick up the new provider."
+    fi
 }
 
 cmd_verify() {
