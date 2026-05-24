@@ -1,0 +1,55 @@
+[project]
+name = "ccs"
+version = "0.4.0"
+description = "Claude Code API provider switching tool"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-only" }
+authors = [
+    { name = "Ike-li" },
+]
+keywords = ["claude", "claude-code", "cli", "anthropic", "provider"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "click>=8.0",
+    "rich>=13.0",
+]
+
+[project.scripts]
+ccs-py = "ccs.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Ike-li/ccs"
+Repository = "https://github.com/Ike-li/ccs"
+Issues = "https://github.com/Ike-li/ccs/issues"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = [
+    "E501",  # keep long command assertions readable
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]

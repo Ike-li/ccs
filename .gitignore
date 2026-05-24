@@ -1,0 +1,25 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Claude Code
+.claude/
+.omc/
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+__pycache__/
+
+# Runtime
+*.bak
+*.tmp
+.lock/
