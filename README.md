@@ -13,7 +13,7 @@ Claude Code provider 切换工具。`ccs use <name>` 会把当前 provider 的 `
 
 ## 功能
 
-- `ccs set` 逐项填写 provider：name、base URL、secret env、key、model
+- `ccs set` 逐项填写 provider：name、base URL、secret env、key、默认模型和 `/model` alias 映射
 - `ccs set <name> ...` 支持脚本式创建或更新
 - `ccs use <name>` 写入 Claude Code 的 `settings.json`
 - API key / auth token 二选一，切换时自动清理另一种 secret env
@@ -113,6 +113,8 @@ ccs set <name> --unset-model
 ccs set <name> -e ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-4-6
 ccs set <name> --unset-env ANTHROPIC_DEFAULT_SONNET_MODEL
 ```
+
+`--unset-model` 只清理 `ANTHROPIC_MODEL`。如果要清理 Opus/Sonnet/Haiku alias 映射，继续用 `--unset-env ANTHROPIC_DEFAULT_*_MODEL`，这样高级模型元数据变量也保持同一套清理方式。
 
 ## 脚本用法
 
