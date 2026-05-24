@@ -363,6 +363,7 @@ settings_parse() {
                 raw_value = substr(s, value_start, value_end - value_start)
                 if (substr(raw_value, 1, 1) == "\"" && !is_managed(key)) {
                     value = unquote(raw_value)
+                    gsub(/\n/, "\\n", value)
                     printf "%s\t%s\n", key, value
                 }
                 i = skip_ws(value_end)

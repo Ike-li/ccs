@@ -551,3 +551,58 @@ printf 200
     token_args = log_file.read_text()
     assert "Authorization: Bearer sk-token" in token_args
     assert "x-api-key:" not in token_args
+
+
+def test_set_rejects_invalid_provider_name(_isolate_home):
+    result = run(_isolate_home, "set", "../etc", "--base-url", "https://x", "--key", "k", check=False)
+    assert result.returncode != 0
+    assert "provider name may only contain" in result.stderr
+
+
+def test_rm_non_active_provider_does_not_touch_settings(_isolate_home):
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "a", "--base-url", "https://a", "--key", "sk-a")
+    run(_isolate_home, "set", "b", "--base-url", "https://b", "--key", "sk-b")
+    run(_isolate_home, "use", "a", "--no-verify")
+
+    result = run(_isolate_home, "rm", "b")
+    assert "removed b" in result.stdout
+
+    data = settings(_isolate_home)
+    assert data["env"]["ANTHROPIC_BASE_URL"] == "https://a"
+    assert data["env"]["ANTHROPIC_API_KEY"] == "sk-a"
+
+
+def test_model_with_special_chars_encoded_correctly(_isolate_home):
+    run(_isolate_home, "init")
+    run(
+        _isolate_home,
+        "set",
+        "k",
+        "--base-url",
+        "https://k",
+        "--key",
+        "sk-k",
+        "--model",
+        'model"with\\quotes',
+    )
+    conf = provider_conf(_isolate_home, "k")
+    assert conf["ANTHROPIC_MODEL"] == 'model"with\\quotes'
+    raw = (_isolate_home / ".config/ccs/providers/k.conf").read_text()
+    assert 'ANTHROPIC_MODEL=model"with\\quotes' in raw
+
+
+def test_use_with_corrupt_settings_json(_isolate_home):
+    settings_file = _isolate_home / ".claude/settings.json"
+    settings_file.parent.mkdir(parents=True)
+    settings_file.write_text("this is not json")
+
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "k", "--base-url", "https://k", "--key", "sk-k")
+    result = run(_isolate_home, "use", "k", "--no-verify")
+
+    assert result.returncode == 0
+    assert "switched -> k" in result.stdout
+    data = settings(_isolate_home)
+    assert data["env"]["ANTHROPIC_BASE_URL"] == "https://k"
+    assert data["env"]["ANTHROPIC_API_KEY"] == "sk-k"
