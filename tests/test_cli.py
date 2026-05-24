@@ -17,6 +17,8 @@ def run(
     home: Path, *args: str, input_text: str | None = None, check: bool = True, env_extra: dict[str, str] | None = None
 ):
     env = {**os.environ, "HOME": str(home), "CCS_VERIFY_TIMEOUT": "1"}
+    env.pop("ANTHROPIC_API_KEY", None)
+    env.pop("ANTHROPIC_AUTH_TOKEN", None)
     if env_extra:
         env.update(env_extra)
     result = subprocess.run(
@@ -131,6 +133,24 @@ def test_switch_between_auth_types_cleans_previous_secret(_isolate_home):
     assert data["env"]["ANTHROPIC_API_KEY"] == "sk-api"
     assert "ANTHROPIC_AUTH_TOKEN" not in data["env"]
     assert "sk-token" not in raw
+
+
+def test_use_warns_about_opposite_secret_in_current_shell(_isolate_home):
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "api", "--base-url", "https://api.example", "--key", "sk-api")
+
+    result = run(
+        _isolate_home,
+        "use",
+        "api",
+        "--no-verify",
+        env_extra={"ANTHROPIC_AUTH_TOKEN": "shell-token"},
+    )
+
+    assert "switched -> api" in result.stdout
+    assert "current shell exports ANTHROPIC_AUTH_TOKEN" in result.stderr
+    assert "unset ANTHROPIC_AUTH_TOKEN" in result.stderr
+    assert "shell-token" not in result.stderr
 
 
 def test_settings_json_preserves_unrelated_fields_and_env(_isolate_home):

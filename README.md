@@ -86,6 +86,15 @@ ccs use kimi --no-verify
 
 切换后重启 Claude Code 会话，让新 settings 生效。
 
+如果 Claude Code 提示 `Auth conflict: Both a token ... and an API key ... are set`，通常是当前 shell 里还 export 着另一种 secret，而不是 `settings.json` 写错。`ccs use` 会提示需要清理的变量，例如：
+
+```bash
+unset ANTHROPIC_AUTH_TOKEN
+claude
+```
+
+也可以直接开一个新终端再启动 Claude Code。
+
 ## 常用命令
 
 | 命令 | 用途 |

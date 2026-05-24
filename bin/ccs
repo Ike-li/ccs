@@ -895,6 +895,23 @@ probe_model() {
     printf '%s' "$VERIFY_PROBE_MODEL"
 }
 
+warn_shell_secret_conflict() {
+    provider_name=$1
+    auth=$2
+    if [ "$auth" = "$AUTH_TOKEN" ]; then
+        used_env=$ENV_AUTH_TOKEN
+        other_env=$ENV_API_KEY
+        [ "${ANTHROPIC_API_KEY+x}" = x ] || return 0
+    else
+        used_env=$ENV_API_KEY
+        other_env=$ENV_AUTH_TOKEN
+        [ "${ANTHROPIC_AUTH_TOKEN+x}" = x ] || return 0
+    fi
+
+    printf 'warning: current shell exports %s, but %s uses %s.\n' "$other_env" "$provider_name" "$used_env" >&2
+    printf 'warning: run: unset %s before starting Claude Code, or open a fresh shell.\n' "$other_env" >&2
+}
+
 cmd_use() {
     [ "$#" -ge 1 ] || die "provider name is required"
     name=$1
@@ -929,6 +946,7 @@ cmd_use() {
     apply_provider "$name"
     printf 'switched -> %s\n' "$name"
     printf 'base_url: %s\n' "$base_url"
+    warn_shell_secret_conflict "$name" "$auth"
     printf 'Restart Claude Code session to pick up the new provider.\n'
 }
 
