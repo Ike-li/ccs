@@ -909,7 +909,17 @@ warn_shell_secret_conflict() {
     fi
 
     printf 'warning: current shell exports %s, but %s uses %s.\n' "$other_env" "$provider_name" "$used_env" >&2
-    printf 'warning: run: unset %s before starting Claude Code, or open a fresh shell.\n' "$other_env" >&2
+}
+
+suggest_shell_secret_cleanup() {
+    auth=$1
+    if [ "$auth" = "$AUTH_TOKEN" ]; then
+        other_env=$ENV_API_KEY
+    else
+        other_env=$ENV_AUTH_TOKEN
+    fi
+
+    use_note "Same terminal cleanup: unset $other_env before starting Claude Code."
 }
 
 print_shell_cleanup() {
@@ -973,7 +983,7 @@ cmd_use() {
     else
         warn_shell_secret_conflict "$name" "$auth"
         use_note "Restart Claude Code session to pick up the new provider."
-        use_note "Same terminal cleanup: eval \"\$(ccs use $name --no-verify --shell)\" before starting Claude Code."
+        suggest_shell_secret_cleanup "$auth"
     fi
 }
 

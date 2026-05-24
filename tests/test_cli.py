@@ -89,7 +89,7 @@ def test_set_and_use_api_key_provider(_isolate_home):
     conf = provider_conf(_isolate_home, "kimi")
     data = settings(_isolate_home)
     assert "switched -> kimi" in result.stdout
-    assert 'eval "$(ccs use kimi --no-verify --shell)"' in result.stdout
+    assert "Same terminal cleanup: unset ANTHROPIC_AUTH_TOKEN" in result.stdout
     assert conf["auth"] == "api_key"
     assert conf["key"] == "sk-FAKE"
     assert data["env"]["ANTHROPIC_BASE_URL"] == "https://kimi.example"
@@ -149,9 +149,8 @@ def test_use_warns_about_opposite_secret_in_current_shell(_isolate_home):
     )
 
     assert "switched -> api" in result.stdout
-    assert 'eval "$(ccs use api --no-verify --shell)"' in result.stdout
+    assert "Same terminal cleanup: unset ANTHROPIC_AUTH_TOKEN" in result.stdout
     assert "current shell exports ANTHROPIC_AUTH_TOKEN" in result.stderr
-    assert "unset ANTHROPIC_AUTH_TOKEN" in result.stderr
     assert "shell-token" not in result.stderr
 
 

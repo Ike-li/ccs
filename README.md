@@ -86,14 +86,14 @@ ccs use kimi --no-verify
 
 切换后重启 Claude Code 会话，让新 settings 生效。
 
-如果 Claude Code 提示 `Auth conflict: Both a token ... and an API key ... are set`，通常是当前 shell 里还 export 着另一种 secret，而不是 `settings.json` 写错。普通 `ccs use` 是子进程，不能直接 unset 父 shell；需要改当前终端环境时，用 shell 模式：
+如果 Claude Code 提示 `Auth conflict: Both a token ... and an API key ... are set`，通常是当前 shell 里还 export 着另一种 secret，而不是 `settings.json` 写错。普通 `ccs use` 是子进程，不能直接 unset 父 shell；它会提示你需要执行的 cleanup，例如：
 
 ```bash
-eval "$(ccs use kimi --shell)"
+unset ANTHROPIC_AUTH_TOKEN
 claude
 ```
 
-`--shell` 会照常写入 `settings.json`，并把需要执行的 `unset ...` 输出到 stdout；普通切换日志会写到 stderr，方便 `eval` 安全执行。也可以直接开一个新终端再启动 Claude Code。
+需要一次性清理所有 ccs 管理的 `ANTHROPIC_*` 变量时，可以用 `eval "$(ccs use kimi --shell)"`。`--shell` 会照常写入 `settings.json`，并把需要执行的 `unset ...` 输出到 stdout；普通切换日志会写到 stderr，方便 `eval` 安全执行。也可以直接开一个新终端再启动 Claude Code。
 
 ## 常用命令
 
