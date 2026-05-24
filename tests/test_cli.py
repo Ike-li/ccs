@@ -89,7 +89,7 @@ def test_set_and_use_api_key_provider(_isolate_home):
     conf = provider_conf(_isolate_home, "kimi")
     data = settings(_isolate_home)
     assert "switched -> kimi" in result.stdout
-    assert "Same terminal cleanup: unset ANTHROPIC_AUTH_TOKEN" in result.stdout
+    assert "Same terminal cleanup" not in result.stdout
     assert conf["auth"] == "api_key"
     assert conf["key"] == "sk-FAKE"
     assert data["env"]["ANTHROPIC_BASE_URL"] == "https://kimi.example"
@@ -179,6 +179,19 @@ def test_use_shell_mode_prints_eval_safe_cleanup(_isolate_home):
     assert "current shell exports ANTHROPIC_AUTH_TOKEN" not in result.stderr
     assert "shell-token" not in result.stdout
     assert "shell-token" not in result.stderr
+
+
+def test_use_shell_mode_keeps_verify_failure_off_stdout(_isolate_home):
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "bad", "--base-url", "file:///nope", "--key", "sk-X")
+
+    result = run(_isolate_home, "use", "bad", "--shell", check=False)
+
+    assert result.returncode != 0
+    assert "verify failed" not in result.stdout
+    assert "Use --no-verify" not in result.stdout
+    assert "verify failed" in result.stderr
+    assert "Use --no-verify" in result.stderr
 
 
 def test_settings_json_preserves_unrelated_fields_and_env(_isolate_home):

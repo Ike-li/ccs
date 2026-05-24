@@ -909,16 +909,6 @@ warn_shell_secret_conflict() {
     fi
 
     printf 'warning: current shell exports %s, but %s uses %s.\n' "$other_env" "$provider_name" "$used_env" >&2
-}
-
-suggest_shell_secret_cleanup() {
-    auth=$1
-    if [ "$auth" = "$AUTH_TOKEN" ]; then
-        other_env=$ENV_API_KEY
-    else
-        other_env=$ENV_AUTH_TOKEN
-    fi
-
     use_note "Same terminal cleanup: unset $other_env before starting Claude Code."
 }
 
@@ -934,7 +924,7 @@ print_shell_cleanup() {
 }
 
 use_note() {
-    if [ "$use_shell" -eq 1 ]; then
+    if [ "${use_shell:-0}" -eq 1 ]; then
         printf '%s\n' "$1" >&2
     else
         printf '%s\n' "$1"
@@ -965,8 +955,8 @@ cmd_use() {
 
     if [ "$no_verify" -eq 0 ]; then
         msg=$(verify_request "$base_url" "$key" "$model" "$auth") || {
-            printf 'verify failed: %s\n' "$msg"
-            printf 'Use --no-verify to switch anyway.\n'
+            use_note "verify failed: $msg"
+            use_note "Use --no-verify to switch anyway."
             exit 1
         }
         use_note "verify: $msg"
@@ -983,7 +973,6 @@ cmd_use() {
     else
         warn_shell_secret_conflict "$name" "$auth"
         use_note "Restart Claude Code session to pick up the new provider."
-        suggest_shell_secret_cleanup "$auth"
     fi
 }
 
