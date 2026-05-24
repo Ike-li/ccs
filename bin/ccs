@@ -1,0 +1,975 @@
+#!/bin/sh
+
+set -u
+
+CCS_DIR=${CCS_DIR:-"$HOME/.config/ccs"}
+PROVIDERS_DIR=$CCS_DIR/providers
+ACTIVE_FILE=$CCS_DIR/active
+SETTINGS_FILE=${CLAUDE_SETTINGS_FILE:-"$HOME/.claude/settings.json"}
+
+AUTH_API_KEY=api_key
+AUTH_TOKEN=auth_token
+ENV_API_KEY=ANTHROPIC_API_KEY
+ENV_AUTH_TOKEN=ANTHROPIC_AUTH_TOKEN
+VERIFY_TIMEOUT=${CCS_VERIFY_TIMEOUT:-10}
+VERIFY_PROBE_MODEL=${CCS_VERIFY_PROBE_MODEL:-claude-sonnet-4-6}
+
+PROVIDER_ENV_KEYS="ANTHROPIC_BASE_URL ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL_NAME ANTHROPIC_DEFAULT_SONNET_MODEL_NAME ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"
+MANAGED_ENV_KEYS="$PROVIDER_ENV_KEYS $ENV_API_KEY $ENV_AUTH_TOKEN"
+FATAL_PROVIDER_ERROR_TYPES="authentication_error invalid_api_key model_not_found not_found_error permission_error"
+
+RESET=$(printf '\033[0m')
+SELECTED=$(printf '\033[1;30;46m')
+CLEAR_LINE=$(printf '\033[K')
+ESC=$(printf '\033')
+LEFT_KEY=$(printf '\033[D')
+RIGHT_KEY=$(printf '\033[C')
+ENTER_KEY=$(printf '\r')
+CTRL_C=$(printf '\003')
+CTRL_D=$(printf '\004')
+
+die() {
+    printf 'Error: %s\n' "$*" >&2
+    exit 1
+}
+
+usage() {
+    cat <<'EOF'
+ccs - Claude Code provider switcher
+
+Usage:
+  ccs init
+  ccs set [name] [--base-url URL] [--key KEY] [--use-api-key|--use-auth-token]
+                 [--model M] [--unset-model] [-e K=V] [--unset-env K]
+  ccs use <name> [--no-verify]
+  ccs verify [name]
+  ccs ls
+  ccs current
+  ccs show <name> [--show-key]
+  ccs rm <name>
+EOF
+}
+
+set_usage() {
+    cat <<'EOF'
+Usage: ccs set [OPTIONS] [NAME]
+
+Create or update a provider.
+
+Options:
+  --base-url URL
+  --key KEY             provider key/token; use '-' to read from stdin
+  --use-api-key         write --key to ANTHROPIC_API_KEY
+  --use-auth-token      write --key to ANTHROPIC_AUTH_TOKEN
+  --model M             ANTHROPIC_MODEL override
+  --unset-model         remove ANTHROPIC_MODEL
+  -e, --env K=V         extra ANTHROPIC_* env
+  --unset-env K         remove an ANTHROPIC_* env key
+  --help                show this help
+EOF
+}
+
+ensure_dirs() {
+    mkdir -p "$PROVIDERS_DIR" || die "cannot create $PROVIDERS_DIR"
+    chmod 700 "$CCS_DIR" 2>/dev/null || true
+    chmod 700 "$PROVIDERS_DIR" 2>/dev/null || true
+}
+
+provider_file() {
+    printf '%s/%s.conf' "$PROVIDERS_DIR" "$1"
+}
+
+valid_provider_name() {
+    printf '%s' "$1" | grep -Eq '^[A-Za-z0-9._-]+$'
+}
+
+require_provider_name() {
+    name=$1
+    [ -n "$name" ] || die "provider name is required"
+    valid_provider_name "$name" || die "provider name may only contain letters, numbers, dot, underscore, and dash"
+}
+
+is_allowed_env_key() {
+    case " $PROVIDER_ENV_KEYS " in
+        *" $1 "*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+is_managed_env_key() {
+    case " $MANAGED_ENV_KEYS " in
+        *" $1 "*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+validate_env_key() {
+    is_allowed_env_key "$1" || die "unsupported env key '$1'"
+}
+
+masked_key() {
+    key=$1
+    if [ -z "$key" ]; then
+        printf '<empty>'
+    else
+        printf '<len=%s>' "$(printf '%s' "$key" | wc -c | tr -d ' ')"
+    fi
+}
+
+secret_env_name() {
+    if [ "${1:-$AUTH_API_KEY}" = "$AUTH_TOKEN" ]; then
+        printf '%s' "$ENV_AUTH_TOKEN"
+    else
+        printf '%s' "$ENV_API_KEY"
+    fi
+}
+
+conf_get() {
+    file=$1
+    key=$2
+    [ -f "$file" ] || return 0
+    awk -v k="$key" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }' "$file"
+}
+
+provider_exists() {
+    [ -f "$(provider_file "$1")" ]
+}
+
+provider_env_to_file() {
+    file=$1
+    out=$2
+    : >"$out"
+    [ -f "$file" ] || return 0
+    awk -v allowed=" $PROVIDER_ENV_KEYS " '
+        {
+            pos = index($0, "=")
+            if (pos == 0) next
+            key = substr($0, 1, pos - 1)
+            if (index(allowed, " " key " ") > 0) print $0
+        }
+    ' "$file" >"$out"
+}
+
+env_file_set() {
+    file=$1
+    key=$2
+    value=$3
+    tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-env.XXXXXX") || exit 1
+    awk -v k="$key" 'index($0, k "=") != 1 { print }' "$file" >"$tmp"
+    if [ -n "$value" ]; then
+        printf '%s=%s\n' "$key" "$value" >>"$tmp"
+    fi
+    mv "$tmp" "$file"
+}
+
+env_file_unset() {
+    file=$1
+    key=$2
+    tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-env.XXXXXX") || exit 1
+    awk -v k="$key" 'index($0, k "=") != 1 { print }' "$file" >"$tmp"
+    mv "$tmp" "$file"
+}
+
+env_file_get() {
+    file=$1
+    key=$2
+    [ -f "$file" ] || return 0
+    awk -v k="$key" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }' "$file"
+}
+
+write_provider() {
+    name=$1
+    auth=$2
+    key=$3
+    env_file=$4
+    file=$(provider_file "$name")
+    tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-provider.XXXXXX") || exit 1
+    {
+        printf 'auth=%s\n' "$auth"
+        printf 'key=%s\n' "$key"
+        awk '
+            {
+                pos = index($0, "=")
+                if (pos == 0) next
+                key = substr($0, 1, pos - 1)
+                value = substr($0, pos + 1)
+                values[key] = value
+            }
+            END {
+                order[1] = "ANTHROPIC_BASE_URL"
+                order[2] = "ANTHROPIC_MODEL"
+                order[3] = "ANTHROPIC_DEFAULT_OPUS_MODEL"
+                order[4] = "ANTHROPIC_DEFAULT_SONNET_MODEL"
+                order[5] = "ANTHROPIC_DEFAULT_HAIKU_MODEL"
+                order[6] = "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"
+                order[7] = "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"
+                order[8] = "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"
+                for (i = 1; i <= 8; i++) {
+                    key = order[i]
+                    if (key in values) print key "=" values[key]
+                }
+            }
+        ' "$env_file"
+    } >"$tmp"
+    chmod 600 "$tmp" 2>/dev/null || true
+    mv "$tmp" "$file"
+}
+
+json_quote() {
+    awk '
+        BEGIN { ORS = "" }
+        {
+            for (i = 1; i <= length($0); i++) {
+                c = substr($0, i, 1)
+                if (c == "\\") printf "\\\\"
+                else if (c == "\"") printf "\\\""
+                else if (c == "\t") printf "\\t"
+                else if (c == "\r") printf "\\r"
+                else printf "%s", c
+            }
+        }
+    '
+}
+
+settings_parse() {
+    mode=$1
+    file=$2
+    [ -f "$file" ] || return 0
+    awk -v mode="$mode" -v managed=" $MANAGED_ENV_KEYS " '
+        function skip_ws(i) {
+            while (i <= n && substr(s, i, 1) ~ /[ \t\r\n]/) i++
+            return i
+        }
+        function scan_string(i,    c, esc) {
+            i++
+            esc = 0
+            while (i <= n) {
+                c = substr(s, i, 1)
+                if (esc) esc = 0
+                else if (c == "\\") esc = 1
+                else if (c == "\"") return i + 1
+                i++
+            }
+            return i
+        }
+        function scan_value(i,    c, depth, esc, in_str) {
+            c = substr(s, i, 1)
+            if (c == "\"") return scan_string(i)
+            if (c == "{" || c == "[") {
+                depth = 0
+                in_str = 0
+                esc = 0
+                while (i <= n) {
+                    c = substr(s, i, 1)
+                    if (in_str) {
+                        if (esc) esc = 0
+                        else if (c == "\\") esc = 1
+                        else if (c == "\"") in_str = 0
+                    } else {
+                        if (c == "\"") in_str = 1
+                        else if (c == "{" || c == "[") depth++
+                        else if (c == "}" || c == "]") {
+                            depth--
+                            if (depth == 0) return i + 1
+                        }
+                    }
+                    i++
+                }
+                return i
+            }
+            while (i <= n) {
+                c = substr(s, i, 1)
+                if (c == "," || c == "}" || c == "]") return i
+                i++
+            }
+            return i
+        }
+        function unquote(raw,    i, c, out, esc, u) {
+            out = ""
+            i = 2
+            while (i < length(raw)) {
+                c = substr(raw, i, 1)
+                if (c == "\\") {
+                    i++
+                    c = substr(raw, i, 1)
+                    if (c == "\"" || c == "\\" || c == "/") out = out c
+                    else if (c == "b") out = out "\b"
+                    else if (c == "f") out = out "\f"
+                    else if (c == "n") out = out "\n"
+                    else if (c == "r") out = out "\r"
+                    else if (c == "t") out = out "\t"
+                    else if (c == "u") {
+                        u = substr(raw, i + 1, 4)
+                        out = out "\\u" u
+                        i += 4
+                    } else out = out c
+                } else out = out c
+                i++
+            }
+            return out
+        }
+        function minify(raw,    i, c, out, esc, in_str) {
+            out = ""
+            esc = 0
+            in_str = 0
+            for (i = 1; i <= length(raw); i++) {
+                c = substr(raw, i, 1)
+                if (in_str) {
+                    out = out c
+                    if (esc) esc = 0
+                    else if (c == "\\") esc = 1
+                    else if (c == "\"") in_str = 0
+                } else {
+                    if (c == "\"") {
+                        in_str = 1
+                        out = out c
+                    } else if (c !~ /[ \t\r\n]/) out = out c
+                }
+            }
+            return out
+        }
+        function is_managed(key) {
+            return index(managed, " " key " ") > 0
+        }
+        function emit_env(vs, ve,    i, key_start, key_end, key, colon, value_start, value_end, raw_value, value) {
+            if (substr(s, skip_ws(vs), 1) != "{") return
+            i = skip_ws(vs) + 1
+            while (i < ve) {
+                i = skip_ws(i)
+                if (substr(s, i, 1) == "}") break
+                if (substr(s, i, 1) != "\"") break
+                key_start = i
+                key_end = scan_string(i)
+                key = unquote(substr(s, key_start, key_end - key_start))
+                colon = skip_ws(key_end)
+                if (substr(s, colon, 1) != ":") break
+                value_start = skip_ws(colon + 1)
+                value_end = scan_value(value_start)
+                raw_value = substr(s, value_start, value_end - value_start)
+                if (substr(raw_value, 1, 1) == "\"" && !is_managed(key)) {
+                    value = unquote(raw_value)
+                    printf "%s\t%s\n", key, value
+                }
+                i = skip_ws(value_end)
+                if (substr(s, i, 1) == ",") i++
+            }
+        }
+        {
+            s = s $0 "\n"
+        }
+        END {
+            n = length(s)
+            i = skip_ws(1)
+            if (substr(s, i, 1) != "{") exit
+            i++
+            while (i <= n) {
+                i = skip_ws(i)
+                if (substr(s, i, 1) == "}") break
+                if (substr(s, i, 1) != "\"") break
+                field_start = i
+                key_start = i
+                key_end = scan_string(i)
+                key = unquote(substr(s, key_start, key_end - key_start))
+                colon = skip_ws(key_end)
+                if (substr(s, colon, 1) != ":") break
+                value_start = skip_ws(colon + 1)
+                value_end = scan_value(value_start)
+                if (mode == "env" && key == "env") {
+                    emit_env(value_start, value_end)
+                } else if (mode == "other" && key != "env" && key != "apiKeyHelper") {
+                    print minify(substr(s, field_start, value_end - field_start))
+                }
+                i = skip_ws(value_end)
+                if (substr(s, i, 1) == ",") i++
+            }
+        }
+    ' "$file"
+}
+
+write_settings_json() {
+    other_file=$1
+    env_file=$2
+    tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-settings.XXXXXX") || exit 1
+    {
+        printf '{\n'
+        first=1
+        while IFS= read -r field; do
+            [ -n "$field" ] || continue
+            if [ "$first" -eq 0 ]; then
+                printf ',\n'
+            fi
+            printf '  %s' "$field"
+            first=0
+        done <"$other_file"
+        if [ "$first" -eq 0 ]; then
+            printf ',\n'
+        fi
+        printf '  "env": {\n'
+        env_first=1
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            key=${line%%=*}
+            value=${line#*=}
+            if [ "$env_first" -eq 0 ]; then
+                printf ',\n'
+            fi
+            printf '    "%s": "' "$key"
+            printf '%s' "$value" | json_quote
+            printf '"'
+            env_first=0
+        done <"$env_file"
+        printf '\n  }\n'
+        printf '}\n'
+    } >"$tmp"
+    mkdir -p "$(dirname "$SETTINGS_FILE")" || die "cannot create settings directory"
+    chmod 600 "$tmp" 2>/dev/null || true
+    mv "$tmp" "$SETTINGS_FILE"
+}
+
+apply_provider() {
+    name=$1
+    provider_path=$(provider_file "$name")
+    [ -f "$provider_path" ] || die "no such provider: '$name'"
+
+    auth=$(conf_get "$provider_path" auth)
+    [ -n "$auth" ] || auth=$AUTH_API_KEY
+    provider_key=$(conf_get "$provider_path" key)
+    [ -n "$provider_key" ] || die "provider '$name' has empty key"
+
+    env_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-env.XXXXXX") || exit 1
+    other_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-other.XXXXXX") || exit 1
+    provider_env_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-provider-env.XXXXXX") || exit 1
+    trap 'rm -f "$env_tmp" "$other_tmp" "$provider_env_tmp"' HUP INT TERM EXIT
+
+    settings_parse other "$SETTINGS_FILE" >"$other_tmp"
+    settings_parse env "$SETTINGS_FILE" | awk -F '\t' -v managed=" $MANAGED_ENV_KEYS " '
+        index(managed, " " $1 " ") == 0 { print $1 "=" substr($0, length($1) + 2) }
+    ' >"$env_tmp"
+
+    provider_env_to_file "$provider_path" "$provider_env_tmp"
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        env_file_set "$env_tmp" "${line%%=*}" "${line#*=}"
+    done <"$provider_env_tmp"
+
+    env_file_set "$env_tmp" "$(secret_env_name "$auth")" "$provider_key"
+    write_settings_json "$other_tmp" "$env_tmp"
+    rm -f "$env_tmp" "$other_tmp" "$provider_env_tmp"
+    trap - HUP INT TERM EXIT
+}
+
+clear_provider_env() {
+    env_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-env.XXXXXX") || exit 1
+    other_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-other.XXXXXX") || exit 1
+    trap 'rm -f "$env_tmp" "$other_tmp"' HUP INT TERM EXIT
+    settings_parse other "$SETTINGS_FILE" >"$other_tmp"
+    settings_parse env "$SETTINGS_FILE" | awk -F '\t' -v managed=" $MANAGED_ENV_KEYS " '
+        index(managed, " " $1 " ") == 0 { print $1 "=" substr($0, length($1) + 2) }
+    ' >"$env_tmp"
+    write_settings_json "$other_tmp" "$env_tmp"
+    rm -f "$env_tmp" "$other_tmp"
+    trap - HUP INT TERM EXIT
+}
+
+prompt_required() {
+    label=$1
+    default=${2:-}
+    if [ -n "$default" ]; then
+        printf '%s [%s]: ' "$label" "$default" >&2
+    else
+        printf '%s: ' "$label" >&2
+    fi
+    IFS= read -r value || exit 1
+    if [ -z "$value" ]; then
+        value=$default
+    fi
+    [ -n "$value" ] || die "$label is required"
+    printf '%s' "$value"
+}
+
+prompt_optional() {
+    label=$1
+    default=${2:-}
+    hide=${3:-0}
+    if [ -n "$default" ]; then
+        printf '%s [%s]: ' "$label" "$default" >&2
+    else
+        printf '%s: ' "$label" >&2
+    fi
+    if [ "$hide" = 1 ] && [ -t 0 ]; then
+        old=$(stty -g)
+        stty -echo
+        IFS= read -r value || value=
+        stty "$old"
+        printf '\n' >&2
+    else
+        IFS= read -r value || value=
+    fi
+    if [ -z "$value" ]; then
+        value=$default
+    fi
+    printf '%s' "$value"
+}
+
+render_auth_selector() {
+    selected=$1
+    api="  $ENV_API_KEY  "
+    token="  $ENV_AUTH_TOKEN  "
+    if [ "$selected" -eq 0 ]; then
+        api="$SELECTED $ENV_API_KEY $RESET"
+    else
+        token="$SELECTED $ENV_AUTH_TOKEN $RESET"
+    fi
+    printf 'Secret env (<-/->, Enter): %s  %s' "$api" "$token"
+}
+
+prompt_auth() {
+    default_auth=${1:-$AUTH_API_KEY}
+    selected=0
+    [ "$default_auth" = "$AUTH_TOKEN" ] && selected=1
+
+    if [ -t 0 ] && [ -t 2 ]; then
+        old=$(stty -g)
+        stty raw -echo
+        render_auth_selector "$selected" >&2
+        while :; do
+            key=$(dd bs=1 count=1 2>/dev/null || true)
+            if [ "$key" = "$ESC" ]; then
+                key2=$(dd bs=1 count=1 2>/dev/null || true)
+                key3=$(dd bs=1 count=1 2>/dev/null || true)
+                key=$key$key2$key3
+            fi
+            if [ "$key" = "$ENTER_KEY" ] || [ -z "$key" ]; then
+                stty "$old"
+                printf '\r\n' >&2
+                [ "$selected" -eq 1 ] && printf '%s' "$AUTH_TOKEN" || printf '%s' "$AUTH_API_KEY"
+                return 0
+            fi
+            if [ "$key" = "$CTRL_C" ] || [ "$key" = "$CTRL_D" ]; then
+                stty "$old"
+                printf '\r\n' >&2
+                exit 1
+            fi
+            if [ "$key" = "$LEFT_KEY" ] || [ "$key" = "$RIGHT_KEY" ]; then
+                [ "$selected" -eq 0 ] && selected=1 || selected=0
+                printf '\r%s' "$CLEAR_LINE" >&2
+                render_auth_selector "$selected" >&2
+            fi
+        done
+    fi
+
+    prompt='Use ANTHROPIC_AUTH_TOKEN / Bearer auth?'
+    if [ "$default_auth" = "$AUTH_TOKEN" ]; then
+        printf '%s [Y/n]: ' "$prompt" >&2
+        IFS= read -r answer || answer=
+        case "$answer" in
+            n|N|no|NO|No) printf '%s' "$AUTH_API_KEY" ;;
+            *) printf '%s' "$AUTH_TOKEN" ;;
+        esac
+    else
+        printf '%s [y/N]: ' "$prompt" >&2
+        IFS= read -r answer || answer=
+        case "$answer" in
+            y|Y|yes|YES|Yes) printf '%s' "$AUTH_TOKEN" ;;
+            *) printf '%s' "$AUTH_API_KEY" ;;
+        esac
+    fi
+}
+
+active_name() {
+    [ -f "$ACTIVE_FILE" ] && sed -n '1p' "$ACTIVE_FILE"
+}
+
+cmd_init() {
+    ensure_dirs
+    [ -f "$ACTIVE_FILE" ] || : >"$ACTIVE_FILE"
+    chmod 600 "$ACTIVE_FILE" 2>/dev/null || true
+    printf 'ok dir:    %s\n' "$CCS_DIR"
+    printf 'Set a provider:   ccs set <name> --base-url <url> --key <key>\n'
+}
+
+cmd_set() {
+    ensure_dirs
+    name=
+    base_url=
+    key_arg=
+    auth_flag=
+    model=
+    unset_model=0
+    options_provided=0
+    env_updates=$(mktemp "${TMPDIR:-/tmp}/ccs-env-updates.XXXXXX") || exit 1
+    env_unsets=$(mktemp "${TMPDIR:-/tmp}/ccs-env-unsets.XXXXXX") || exit 1
+    : >"$env_updates"
+    : >"$env_unsets"
+    trap 'rm -f "$env_updates" "$env_unsets"' HUP INT TERM EXIT
+
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --help)
+                set_usage
+                rm -f "$env_updates" "$env_unsets"
+                trap - HUP INT TERM EXIT
+                return 0
+                ;;
+            --base-url)
+                [ "$#" -ge 2 ] || die "--base-url requires a value"
+                base_url=$2
+                options_provided=1
+                shift 2
+                ;;
+            --key)
+                [ "$#" -ge 2 ] || die "--key requires a value"
+                key_arg=$2
+                options_provided=1
+                shift 2
+                ;;
+            --use-api-key)
+                [ -z "$auth_flag" ] || die "--use-api-key and --use-auth-token cannot be used together"
+                auth_flag=$AUTH_API_KEY
+                options_provided=1
+                shift
+                ;;
+            --use-auth-token)
+                [ -z "$auth_flag" ] || die "--use-api-key and --use-auth-token cannot be used together"
+                auth_flag=$AUTH_TOKEN
+                options_provided=1
+                shift
+                ;;
+            --model)
+                [ "$#" -ge 2 ] || die "--model requires a value"
+                model=$2
+                options_provided=1
+                shift 2
+                ;;
+            --unset-model)
+                unset_model=1
+                options_provided=1
+                shift
+                ;;
+            -e|--env)
+                [ "$#" -ge 2 ] || die "$1 requires KEY=VALUE"
+                case "$2" in
+                    *=*) ;;
+                    *) die "$1 requires KEY=VALUE" ;;
+                esac
+                env_key=${2%%=*}
+                env_value=${2#*=}
+                validate_env_key "$env_key"
+                printf '%s=%s\n' "$env_key" "$env_value" >>"$env_updates"
+                options_provided=1
+                shift 2
+                ;;
+            --unset-env)
+                [ "$#" -ge 2 ] || die "--unset-env requires a key"
+                validate_env_key "$2"
+                [ "$2" != "ANTHROPIC_BASE_URL" ] || die "ANTHROPIC_BASE_URL cannot be removed; use --base-url to replace it"
+                printf '%s\n' "$2" >>"$env_unsets"
+                options_provided=1
+                shift 2
+                ;;
+            --*)
+                die "unknown option: $1"
+                ;;
+            *)
+                [ -z "$name" ] || die "unexpected argument: $1"
+                name=$1
+                shift
+                ;;
+        esac
+    done
+
+    if [ -z "$name" ]; then
+        name=$(prompt_required "Provider name")
+    fi
+    require_provider_name "$name"
+
+    file=$(provider_file "$name")
+    created=0
+    [ -f "$file" ] || created=1
+    env_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-env.XXXXXX") || exit 1
+    provider_env_to_file "$file" "$env_tmp"
+    current_auth=$(conf_get "$file" auth)
+    [ -n "$current_auth" ] || current_auth=$AUTH_API_KEY
+    current_key=$(conf_get "$file" key)
+    current_base_url=$(env_file_get "$env_tmp" ANTHROPIC_BASE_URL)
+    current_model=$(env_file_get "$env_tmp" ANTHROPIC_MODEL)
+
+    auth=$current_auth
+    [ -n "$auth_flag" ] && auth=$auth_flag
+
+    if [ "$options_provided" -eq 0 ]; then
+        base_url=$(prompt_required "Base URL" "$current_base_url")
+        auth=$(prompt_auth "$current_auth")
+        env_name=$(secret_env_name "$auth")
+        if [ "$created" -eq 1 ]; then
+            key_arg=$(prompt_optional "Key for $env_name" "" 1)
+        else
+            key_arg=$(prompt_optional "Key for $env_name (enter to keep current $(masked_key "$current_key"))" "" 1)
+        fi
+        model=$(prompt_optional "Model (optional)" "$current_model" 0)
+    elif [ "$created" -eq 1 ]; then
+        [ -n "$base_url" ] || base_url=$(prompt_required "Base URL")
+        if [ -z "$key_arg" ]; then
+            key_arg=$(prompt_optional "Key for $(secret_env_name "$auth")" "" 1)
+        fi
+    fi
+
+    if [ "$key_arg" = "-" ]; then
+        IFS= read -r key_arg || key_arg=
+    fi
+    if [ -n "$key_arg" ]; then
+        current_key=$key_arg
+    fi
+    [ -n "$current_key" ] || die "--key is required when creating a provider"
+
+    if [ -n "$base_url" ]; then
+        env_file_set "$env_tmp" ANTHROPIC_BASE_URL "$base_url"
+    fi
+    while IFS= read -r env_key; do
+        [ -n "$env_key" ] || continue
+        env_file_unset "$env_tmp" "$env_key"
+    done <"$env_unsets"
+    if [ "$unset_model" -eq 1 ]; then
+        env_file_unset "$env_tmp" ANTHROPIC_MODEL
+    fi
+    if [ -n "$model" ]; then
+        env_file_set "$env_tmp" ANTHROPIC_MODEL "$model"
+    fi
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        env_file_set "$env_tmp" "${line%%=*}" "${line#*=}"
+    done <"$env_updates"
+
+    [ -n "$(env_file_get "$env_tmp" ANTHROPIC_BASE_URL)" ] || die "ANTHROPIC_BASE_URL is required"
+
+    write_provider "$name" "$auth" "$current_key" "$env_tmp"
+    if [ "$(active_name)" = "$name" ]; then
+        apply_provider "$name"
+        printf '%s %s (active reapplied)\n' "$([ "$created" -eq 1 ] && printf created || printf updated)" "$name"
+    else
+        printf '%s %s\n' "$([ "$created" -eq 1 ] && printf created || printf updated)" "$name"
+    fi
+
+    rm -f "$env_updates" "$env_unsets" "$env_tmp"
+    trap - HUP INT TERM EXIT
+}
+
+verify_request() {
+    base_url=$1
+    key=$2
+    model=$3
+    auth=$4
+
+    case "$base_url" in
+        http://*|https://*) ;;
+        *://*) printf 'unsupported scheme: %s\n' "${base_url%%://*}"; return 1 ;;
+        *) printf 'invalid base_url: %s\n' "$base_url"; return 1 ;;
+    esac
+    command -v curl >/dev/null 2>&1 || die "curl is required for verify"
+
+    body_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-body.XXXXXX") || exit 1
+    err_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-curl.XXXXXX") || exit 1
+    model_json=$(printf '%s' "$model" | json_quote)
+    body='{"model":"'"$model_json"'","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}'
+    url=${base_url%/}/v1/messages
+    if [ "$auth" = "$AUTH_TOKEN" ]; then
+        status=$(curl -sS -m "$VERIFY_TIMEOUT" -o "$body_tmp" -w '%{http_code}' \
+            -X POST "$url" \
+            -H 'anthropic-version: 2023-06-01' \
+            -H 'content-type: application/json' \
+            -H "Authorization: Bearer $key" \
+            --data "$body" 2>"$err_tmp") || {
+            msg=$(sed -n '1p' "$err_tmp")
+            rm -f "$body_tmp" "$err_tmp"
+            printf 'Connection failed: %s\n' "$msg"
+            return 1
+        }
+    else
+        status=$(curl -sS -m "$VERIFY_TIMEOUT" -o "$body_tmp" -w '%{http_code}' \
+            -X POST "$url" \
+            -H 'anthropic-version: 2023-06-01' \
+            -H 'content-type: application/json' \
+            -H "x-api-key: $key" \
+            --data "$body" 2>"$err_tmp") || {
+            msg=$(sed -n '1p' "$err_tmp")
+            rm -f "$body_tmp" "$err_tmp"
+            printf 'Connection failed: %s\n' "$msg"
+            return 1
+        }
+    fi
+
+    case "$status" in
+        2*) printf 'OK (%s)\n' "$status"; rm -f "$body_tmp" "$err_tmp"; return 0 ;;
+        401) printf 'Authentication failed (401)\n'; rm -f "$body_tmp" "$err_tmp"; return 1 ;;
+        403) printf 'Access denied (403)\n'; rm -f "$body_tmp" "$err_tmp"; return 1 ;;
+        4*)
+            etype=$(sed -n 's/.*"type"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$body_tmp" | sed -n '1p')
+            emsg=$(sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$body_tmp" | sed -n '1p')
+            case " $FATAL_PROVIDER_ERROR_TYPES " in
+                *" $etype "*)
+                    [ -n "$emsg" ] || emsg=$etype
+                    printf 'Provider rejected: %s\n' "$emsg"
+                    rm -f "$body_tmp" "$err_tmp"
+                    return 1
+                    ;;
+            esac
+            printf 'Reachable (HTTP %s)\n' "$status"
+            rm -f "$body_tmp" "$err_tmp"
+            return 0
+            ;;
+        5*) printf 'Server error (HTTP %s)\n' "$status"; rm -f "$body_tmp" "$err_tmp"; return 1 ;;
+        *) printf 'Connection failed: unexpected HTTP status %s\n' "$status"; rm -f "$body_tmp" "$err_tmp"; return 1 ;;
+    esac
+}
+
+cmd_use() {
+    [ "$#" -ge 1 ] || die "provider name is required"
+    name=$1
+    shift
+    no_verify=0
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --no-verify) no_verify=1; shift ;;
+            *) die "unknown option: $1" ;;
+        esac
+    done
+    require_provider_name "$name"
+    file=$(provider_file "$name")
+    [ -f "$file" ] || die "no such provider: '$name'"
+    auth=$(conf_get "$file" auth)
+    [ -n "$auth" ] || auth=$AUTH_API_KEY
+    key=$(conf_get "$file" key)
+    base_url=$(conf_get "$file" ANTHROPIC_BASE_URL)
+    model=$(conf_get "$file" ANTHROPIC_MODEL)
+    [ -n "$model" ] || model=$VERIFY_PROBE_MODEL
+
+    if [ "$no_verify" -eq 0 ]; then
+        msg=$(verify_request "$base_url" "$key" "$model" "$auth") || {
+            printf 'verify failed: %s\n' "$msg"
+            printf 'Use --no-verify to switch anyway.\n'
+            exit 1
+        }
+        printf 'verify: %s\n' "$msg"
+    fi
+
+    printf '%s\n' "$name" >"$ACTIVE_FILE"
+    chmod 600 "$ACTIVE_FILE" 2>/dev/null || true
+    apply_provider "$name"
+    printf 'switched -> %s\n' "$name"
+    printf 'base_url: %s\n' "$base_url"
+    printf 'Restart Claude Code session to pick up the new provider.\n'
+}
+
+cmd_verify() {
+    if [ "$#" -gt 1 ]; then
+        die "too many arguments"
+    fi
+    name=${1:-$(active_name)}
+    [ -n "$name" ] || die "no provider given and no active provider"
+    require_provider_name "$name"
+    file=$(provider_file "$name")
+    [ -f "$file" ] || die "no such provider: '$name'"
+    auth=$(conf_get "$file" auth)
+    [ -n "$auth" ] || auth=$AUTH_API_KEY
+    key=$(conf_get "$file" key)
+    base_url=$(conf_get "$file" ANTHROPIC_BASE_URL)
+    model=$(conf_get "$file" ANTHROPIC_MODEL)
+    [ -n "$model" ] || model=$VERIFY_PROBE_MODEL
+    msg=$(verify_request "$base_url" "$key" "$model" "$auth") || {
+        printf '%s: %s\n' "$name" "$msg"
+        exit 1
+    }
+    printf '%s: %s\n' "$name" "$msg"
+}
+
+cmd_ls() {
+    ensure_dirs
+    found=0
+    active=$(active_name)
+    printf '%-2s %-18s %-22s %-36s %s\n' "" "Name" "Secret env" "Base URL" "Key"
+    for file in "$PROVIDERS_DIR"/*.conf; do
+        [ -e "$file" ] || continue
+        found=1
+        name=$(basename "$file" .conf)
+        marker=
+        [ "$name" = "$active" ] && marker='*'
+        auth=$(conf_get "$file" auth)
+        key=$(conf_get "$file" key)
+        base_url=$(conf_get "$file" ANTHROPIC_BASE_URL)
+        printf '%-2s %-18s %-22s %-36s %s\n' "$marker" "$name" "$(secret_env_name "$auth")" "$base_url" "$(masked_key "$key")"
+    done
+    [ "$found" -eq 1 ] || printf 'No providers yet. Try: ccs init && ccs set\n'
+}
+
+cmd_show() {
+    [ "$#" -ge 1 ] || die "provider name is required"
+    name=$1
+    shift
+    show_key=0
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --show-key) show_key=1; shift ;;
+            *) die "unknown option: $1" ;;
+        esac
+    done
+    require_provider_name "$name"
+    file=$(provider_file "$name")
+    [ -f "$file" ] || die "no such provider: '$name'"
+    auth=$(conf_get "$file" auth)
+    key=$(conf_get "$file" key)
+    printf '%-28s %s\n' name "$name"
+    [ "$(active_name)" = "$name" ] && printf '%-28s yes\n' active || printf '%-28s no\n' active
+    printf '%-28s %s\n' "secret env" "$(secret_env_name "$auth")"
+    if [ "$show_key" -eq 1 ]; then
+        printf '%-28s %s\n' key "$key"
+    else
+        printf '%-28s %s\n' key "$(masked_key "$key")"
+    fi
+    provider_env_to_file "$file" /dev/stdout | while IFS= read -r line; do
+        printf '%-28s %s\n' "${line%%=*}" "${line#*=}"
+    done
+}
+
+cmd_current() {
+    name=$(active_name)
+    [ -n "$name" ] || {
+        printf 'No active provider\n'
+        return 0
+    }
+    file=$(provider_file "$name")
+    [ -f "$file" ] || die "active provider '$name' is missing"
+    printf '%s -> %s\n' "$name" "$(conf_get "$file" ANTHROPIC_BASE_URL)"
+}
+
+cmd_rm() {
+    [ "$#" -eq 1 ] || die "provider name is required"
+    name=$1
+    require_provider_name "$name"
+    file=$(provider_file "$name")
+    [ -f "$file" ] || die "no such provider: '$name'"
+    rm -f "$file"
+    if [ "$(active_name)" = "$name" ]; then
+        : >"$ACTIVE_FILE"
+        clear_provider_env
+    fi
+    printf 'removed %s\n' "$name"
+}
+
+main() {
+    cmd=${1:-ls}
+    [ "$#" -gt 0 ] && shift || true
+    case "$cmd" in
+        init) cmd_init "$@" ;;
+        set) cmd_set "$@" ;;
+        use) cmd_use "$@" ;;
+        verify) cmd_verify "$@" ;;
+        ls|list) cmd_ls "$@" ;;
+        current) cmd_current "$@" ;;
+        show) cmd_show "$@" ;;
+        rm|remove) cmd_rm "$@" ;;
+        -h|--help|help) usage ;;
+        *) die "unknown command: $cmd" ;;
+    esac
+}
+
+main "$@"
