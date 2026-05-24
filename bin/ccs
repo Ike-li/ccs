@@ -973,6 +973,7 @@ cmd_use() {
     else
         warn_shell_secret_conflict "$name" "$auth"
         use_note "Restart Claude Code session to pick up the new provider."
+        use_note "Same terminal cleanup: eval \"\$(ccs use $name --no-verify --shell)\" before starting Claude Code."
     fi
 }
 
