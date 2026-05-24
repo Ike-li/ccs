@@ -19,15 +19,16 @@ _ccs() {
 
     local commands="init set use verify ls list current show rm remove help --help --version -h -v"
     local providers_dir="${CCS_DIR:-$HOME/.config/ccs}/providers"
-    local providers=""
+    local -a providers=()
     if [ -d "$providers_dir" ]; then
         local f name
         for f in "$providers_dir"/*.conf; do
             [ -e "$f" ] || continue
             name=${f##*/}
-            providers="$providers ${name%.conf}"
+            providers+=("${name%.conf}")
         done
     fi
+    local providers_str="${providers[*]}"
 
     if [ "$cword" -le 1 ]; then
         # shellcheck disable=SC2207
@@ -40,7 +41,7 @@ _ccs() {
         use)
             if [ "$cword" -eq 2 ]; then
                 # shellcheck disable=SC2207
-                COMPREPLY=( $(compgen -W "$providers" -- "$cur") )
+                COMPREPLY=( $(compgen -W "$providers_str" -- "$cur") )
             else
                 # shellcheck disable=SC2207
                 COMPREPLY=( $(compgen -W "--no-verify --shell" -- "$cur") )
@@ -49,13 +50,13 @@ _ccs() {
         verify|rm|remove)
             if [ "$cword" -eq 2 ]; then
                 # shellcheck disable=SC2207
-                COMPREPLY=( $(compgen -W "$providers" -- "$cur") )
+                COMPREPLY=( $(compgen -W "$providers_str" -- "$cur") )
             fi
             ;;
         show)
             if [ "$cword" -eq 2 ]; then
                 # shellcheck disable=SC2207
-                COMPREPLY=( $(compgen -W "$providers" -- "$cur") )
+                COMPREPLY=( $(compgen -W "$providers_str" -- "$cur") )
             else
                 # shellcheck disable=SC2207
                 COMPREPLY=( $(compgen -W "--show-key" -- "$cur") )
@@ -72,7 +73,7 @@ _ccs() {
                     ;;
                 *)
                     # shellcheck disable=SC2207
-                    COMPREPLY=( $(compgen -W "--base-url --key --use-api-key --use-auth-token --model --opus-model --sonnet-model --haiku-model --unset-model -e --env --unset-env --help $providers" -- "$cur") )
+                    COMPREPLY=( $(compgen -W "--base-url --key --use-api-key --use-auth-token --model --opus-model --sonnet-model --haiku-model --unset-model -e --env --unset-env --help $providers_str" -- "$cur") )
                     ;;
             esac
             ;;

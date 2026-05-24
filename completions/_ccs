@@ -58,7 +58,7 @@ _ccs() {
                     _arguments \
                         '--no-verify[Skip verify request]' \
                         '--shell[Print eval-safe cleanup to stdout]' \
-                        ':provider:($providers)'
+                        ':provider:_values provider $providers'
                     ;;
                 verify|rm|remove)
                     _describe 'provider' providers
@@ -66,7 +66,7 @@ _ccs() {
                 show)
                     _arguments \
                         '--show-key[Reveal the full key]' \
-                        ':provider:($providers)'
+                        ':provider:_values provider $providers'
                     ;;
                 set)
                     _arguments \
@@ -81,8 +81,8 @@ _ccs() {
                         '--unset-model[Remove ANTHROPIC_MODEL]' \
                         '*-e+[Extra env]:KEY=VALUE:' \
                         '*--env+[Extra env]:KEY=VALUE:' \
-                        "--unset-env[Remove env key]:key:($managed_envs)" \
-                        ':provider:($providers)'
+                        "--unset-env[Remove env key]:key:_values env $managed_envs" \
+                        ':provider:_values provider $providers'
                     ;;
             esac
             ;;

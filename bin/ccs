@@ -451,10 +451,13 @@ apply_provider() {
     provider_key=$(conf_get "$provider_path" key)
     [ -n "$provider_key" ] || die "provider '$name' has empty key"
 
+    env_tmp=
+    other_tmp=
+    provider_env_tmp=
+    trap 'rm -f "$env_tmp" "$other_tmp" "$provider_env_tmp"' HUP INT TERM EXIT
     env_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-env.XXXXXX") || exit 1
     other_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-other.XXXXXX") || exit 1
     provider_env_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-provider-env.XXXXXX") || exit 1
-    trap 'rm -f "$env_tmp" "$other_tmp" "$provider_env_tmp"' HUP INT TERM EXIT
 
     settings_parse other "$SETTINGS_FILE" >"$other_tmp"
     settings_parse env "$SETTINGS_FILE" | awk -F '\t' -v managed=" $MANAGED_ENV_KEYS " '
@@ -474,9 +477,11 @@ apply_provider() {
 }
 
 clear_provider_env() {
+    env_tmp=
+    other_tmp=
+    trap 'rm -f "$env_tmp" "$other_tmp"' HUP INT TERM EXIT
     env_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-env.XXXXXX") || exit 1
     other_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-other.XXXXXX") || exit 1
-    trap 'rm -f "$env_tmp" "$other_tmp"' HUP INT TERM EXIT
     settings_parse other "$SETTINGS_FILE" >"$other_tmp"
     settings_parse env "$SETTINGS_FILE" | awk -F '\t' -v managed=" $MANAGED_ENV_KEYS " '
         index(managed, " " $1 " ") == 0 { print $1 "=" substr($0, length($1) + 2) }
@@ -609,6 +614,12 @@ cmd_init() {
 }
 
 cmd_set() {
+    for arg do
+        case "$arg" in
+            --help) set_usage; return 0 ;;
+        esac
+    done
+
     ensure_dirs
     name=
     base_url=
@@ -620,18 +631,19 @@ cmd_set() {
     haiku_model=
     unset_model=0
     options_provided=0
+    env_updates=
+    env_unsets=
+    env_tmp=
+    trap 'rm -f "$env_updates" "$env_unsets" "$env_tmp"' HUP INT TERM EXIT
     env_updates=$(mktemp "${TMPDIR:-/tmp}/ccs-env-updates.XXXXXX") || exit 1
     env_unsets=$(mktemp "${TMPDIR:-/tmp}/ccs-env-unsets.XXXXXX") || exit 1
     : >"$env_updates"
     : >"$env_unsets"
-    trap 'rm -f "$env_updates" "$env_unsets"' HUP INT TERM EXIT
 
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --help)
                 set_usage
-                rm -f "$env_updates" "$env_unsets"
-                trap - HUP INT TERM EXIT
                 return 0
                 ;;
             --base-url)
@@ -728,7 +740,6 @@ cmd_set() {
     created=0
     [ -f "$file" ] || created=1
     env_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-env.XXXXXX") || exit 1
-    trap 'rm -f "$env_updates" "$env_unsets" "$env_tmp"' HUP INT TERM EXIT
     provider_env_to_file "$file" "$env_tmp"
     current_auth=$(conf_get "$file" auth)
     [ -n "$current_auth" ] || current_auth=$AUTH_API_KEY
@@ -831,9 +842,11 @@ verify_request() {
     command -v curl >/dev/null 2>&1 || die "curl is required for verify"
 
     (
+        body_tmp=
+        err_tmp=
+        trap 'rm -f "$body_tmp" "$err_tmp"' HUP INT TERM EXIT
         body_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-body.XXXXXX") || exit 1
         err_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-curl.XXXXXX") || exit 1
-        trap 'rm -f "$body_tmp" "$err_tmp"' HUP INT TERM EXIT
         model_json=$(printf '%s' "$model" | json_quote)
         body='{"model":"'"$model_json"'","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}'
         url=${base_url%/}/v1/messages

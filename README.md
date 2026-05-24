@@ -227,7 +227,7 @@ ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-haiku-4-5
 |---|---|---|
 | `Authentication failed (401)` | provider key 错或失效 | `ccs show <name> --show-key` 核对；用 `ccs set <name> --key NEW` 更新 |
 | `Access denied (403)` | key 有效但被拒绝（账号/权限/IP 限制） | 登录 provider 控制台检查 key 的 scope / 配额 / IP 白名单 |
-| `Provider rejected: ...model_not_found...` | provider 不认识探测使用的模型名 | 用 `ccs set <name> --model <provider-supported-model>` 显式指定；或 `--opus-model` / `--sonnet-model` / `--haiku-model` 单独映射 |
+| `Provider rejected: <message>` | provider 主动拒绝（model 错、key 没权限、参数无效等） | 看 message 内容；如果是模型不存在，用 `ccs set <name> --model <provider 支持的模型>` 显式指定，或 `--opus-model` / `--sonnet-model` / `--haiku-model` 单独映射 |
 | `Connection failed: ...` | base URL 不通、DNS 解析失败、超时 | 用 `curl -v ${BASE_URL}/v1/messages` 验证可达；调整 `CCS_VERIFY_TIMEOUT` |
 | `unsupported scheme: file` | base URL 不是 http(s) | `ccs set <name> --base-url https://...` |
 
