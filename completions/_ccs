@@ -1,0 +1,92 @@
+#compdef ccs
+#
+# ccs zsh completion
+#
+# Install:
+#   1. Copy to a directory in $fpath, e.g.:
+#        cp completions/_ccs ~/.zsh/completions/_ccs
+#   2. Ensure that directory is in $fpath (in ~/.zshrc):
+#        fpath=(~/.zsh/completions $fpath)
+#        autoload -Uz compinit && compinit
+
+_ccs() {
+    local providers_dir="${CCS_DIR:-$HOME/.config/ccs}/providers"
+    local -a providers
+    if [[ -d "$providers_dir" ]]; then
+        providers=( "${providers_dir}"/*.conf(N:t:r) )
+    fi
+
+    local -a commands
+    commands=(
+        'init:Initialize ccs config dir'
+        'set:Create or update a provider'
+        'use:Switch active provider'
+        'verify:Verify a provider'
+        'ls:List providers'
+        'list:List providers'
+        'current:Show active provider'
+        'show:Show provider details'
+        'rm:Remove a provider'
+        'remove:Remove a provider'
+        'help:Show usage'
+        '--help:Show usage'
+        '--version:Show version'
+    )
+
+    local -a managed_envs
+    managed_envs=(
+        ANTHROPIC_MODEL
+        ANTHROPIC_DEFAULT_OPUS_MODEL
+        ANTHROPIC_DEFAULT_SONNET_MODEL
+        ANTHROPIC_DEFAULT_HAIKU_MODEL
+    )
+
+    local context state line
+    typeset -A opt_args
+
+    _arguments -C \
+        '1: :->cmd' \
+        '*::arg:->args'
+
+    case "$state" in
+        cmd)
+            _describe 'command' commands
+            ;;
+        args)
+            case "${words[1]}" in
+                use)
+                    _arguments \
+                        '--no-verify[Skip verify request]' \
+                        '--shell[Print eval-safe cleanup to stdout]' \
+                        ':provider:($providers)'
+                    ;;
+                verify|rm|remove)
+                    _describe 'provider' providers
+                    ;;
+                show)
+                    _arguments \
+                        '--show-key[Reveal the full key]' \
+                        ':provider:($providers)'
+                    ;;
+                set)
+                    _arguments \
+                        '--base-url[Base URL]:url:' \
+                        '--key[Provider key (- reads stdin)]:key:' \
+                        '--use-api-key[Write to ANTHROPIC_API_KEY]' \
+                        '--use-auth-token[Write to ANTHROPIC_AUTH_TOKEN]' \
+                        '--model[Default model (ANTHROPIC_MODEL)]:model:' \
+                        '--opus-model[Opus alias]:model:' \
+                        '--sonnet-model[Sonnet alias]:model:' \
+                        '--haiku-model[Haiku alias]:model:' \
+                        '--unset-model[Remove ANTHROPIC_MODEL]' \
+                        '*-e+[Extra env]:KEY=VALUE:' \
+                        '*--env+[Extra env]:KEY=VALUE:' \
+                        "--unset-env[Remove env key]:key:($managed_envs)" \
+                        ':provider:($providers)'
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+_ccs "$@"

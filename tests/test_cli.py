@@ -344,6 +344,28 @@ def test_current_and_ls_show_active_provider(_isolate_home):
     assert "ANTHROPIC_API_KEY" in listing
 
 
+def test_ls_widens_columns_for_long_provider_names(_isolate_home):
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "x", "--base-url", "https://x.example", "--key", "sk-X")
+    run(
+        _isolate_home,
+        "set",
+        "very-long-provider-name",
+        "--base-url",
+        "https://much-longer-base-url.example.com/anthropic",
+        "--key",
+        "sk-Y",
+    )
+
+    listing = run(_isolate_home, "ls").stdout
+    assert "very-long-provider-name" in listing
+    assert "https://much-longer-base-url.example.com/anthropic" in listing
+    long_line = next(line for line in listing.splitlines() if "very-long-provider-name" in line)
+    short_line = next(line for line in listing.splitlines() if line.endswith("<len=4>") and "very-long" not in line)
+    header_line = next(line for line in listing.splitlines() if "Name" in line and "Base URL" in line)
+    assert long_line.index("ANTHROPIC_API_KEY") == short_line.index("ANTHROPIC_API_KEY") == header_line.index("Secret env")
+
+
 def test_set_help_uses_simple_auth_flags(_isolate_home):
     result = run(_isolate_home, "set", "--help")
 

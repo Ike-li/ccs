@@ -1005,21 +1005,39 @@ cmd_verify() {
 
 cmd_ls() {
     ensure_dirs
-    found=0
     active=$(active_name)
-    printf '%-2s %-18s %-22s %-36s %s\n' "" "Name" "Secret env" "Base URL" "Key"
+
+    name_w=4
+    secret_w=10
+    url_w=8
+    found=0
     for file in "$PROVIDERS_DIR"/*.conf; do
         [ -e "$file" ] || continue
         found=1
+        name=$(basename "$file" .conf)
+        secret=$(secret_env_name "$(conf_get "$file" auth)")
+        base_url=$(conf_get "$file" ANTHROPIC_BASE_URL)
+        [ "${#name}" -gt "$name_w" ] && name_w=${#name}
+        [ "${#secret}" -gt "$secret_w" ] && secret_w=${#secret}
+        [ "${#base_url}" -gt "$url_w" ] && url_w=${#base_url}
+    done
+
+    if [ "$found" -eq 0 ]; then
+        printf 'No providers yet. Try: ccs init && ccs set\n'
+        return 0
+    fi
+
+    printf '%-2s %-*s %-*s %-*s %s\n' "" "$name_w" "Name" "$secret_w" "Secret env" "$url_w" "Base URL" "Key"
+    for file in "$PROVIDERS_DIR"/*.conf; do
+        [ -e "$file" ] || continue
         name=$(basename "$file" .conf)
         marker=
         [ "$name" = "$active" ] && marker='*'
         auth=$(conf_get "$file" auth)
         key=$(conf_get "$file" key)
         base_url=$(conf_get "$file" ANTHROPIC_BASE_URL)
-        printf '%-2s %-18s %-22s %-36s %s\n' "$marker" "$name" "$(secret_env_name "$auth")" "$base_url" "$(masked_key "$key")"
+        printf '%-2s %-*s %-*s %-*s %s\n' "$marker" "$name_w" "$name" "$secret_w" "$(secret_env_name "$auth")" "$url_w" "$base_url" "$(masked_key "$key")"
     done
-    [ "$found" -eq 1 ] || printf 'No providers yet. Try: ccs init && ccs set\n'
 }
 
 cmd_show() {

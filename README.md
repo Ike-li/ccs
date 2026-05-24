@@ -42,6 +42,24 @@ ccs --help
 ./bin/ccs --help
 ```
 
+### Shell 补全（可选）
+
+仓库 `completions/` 目录提供 bash 和 zsh 的补全脚本，可以 tab 补全子命令、provider name、`--*` 选项。
+
+bash：
+```bash
+. /path/to/ccs/completions/ccs.bash   # 加进 ~/.bashrc
+```
+
+zsh：
+```bash
+mkdir -p ~/.zsh/completions
+cp completions/_ccs ~/.zsh/completions/_ccs
+# 在 ~/.zshrc 加入：
+#   fpath=(~/.zsh/completions $fpath)
+#   autoload -Uz compinit && compinit
+```
+
 ## 如何使用
 
 初始化配置目录：
@@ -202,6 +220,18 @@ ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-haiku-4-5
 `CCS_VERIFY_TIMEOUT` 可以调整超时秒数，默认 10 秒。
 
 探测模型优先使用 `ANTHROPIC_MODEL`，如果没配置，会依次使用 `ANTHROPIC_DEFAULT_OPUS_MODEL`、`ANTHROPIC_DEFAULT_SONNET_MODEL`、`ANTHROPIC_DEFAULT_HAIKU_MODEL`，最后才回退到内置 probe model。
+
+## 故障排查
+
+| `ccs verify` 输出 | 含义 | 建议处理 |
+|---|---|---|
+| `Authentication failed (401)` | provider key 错或失效 | `ccs show <name> --show-key` 核对；用 `ccs set <name> --key NEW` 更新 |
+| `Access denied (403)` | key 有效但被拒绝（账号/权限/IP 限制） | 登录 provider 控制台检查 key 的 scope / 配额 / IP 白名单 |
+| `Provider rejected: ...model_not_found...` | provider 不认识探测使用的模型名 | 用 `ccs set <name> --model <provider-supported-model>` 显式指定；或 `--opus-model` / `--sonnet-model` / `--haiku-model` 单独映射 |
+| `Connection failed: ...` | base URL 不通、DNS 解析失败、超时 | 用 `curl -v ${BASE_URL}/v1/messages` 验证可达；调整 `CCS_VERIFY_TIMEOUT` |
+| `unsupported scheme: file` | base URL 不是 http(s) | `ccs set <name> --base-url https://...` |
+
+Claude Code 启动时如果报 `Auth conflict: Both a token ... and an API key ... are set`，看本文上半部分"切换 provider"段落，按提示 unset 当前 shell 里残留的 secret 变量。
 
 ## 安全语义
 
