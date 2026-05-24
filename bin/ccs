@@ -2,6 +2,7 @@
 
 set -u
 
+CCS_VERSION=0.4.0
 CCS_DIR=${CCS_DIR:-"$HOME/.config/ccs"}
 PROVIDERS_DIR=$CCS_DIR/providers
 ACTIVE_FILE=$CCS_DIR/active
@@ -512,9 +513,11 @@ prompt_optional() {
     fi
     if [ "$hide" = 1 ] && [ -t 0 ]; then
         old=$(stty -g)
+        trap 'stty "$old" 2>/dev/null; trap - HUP INT TERM; exit 130' HUP INT TERM
         stty -echo
         IFS= read -r value || value=
         stty "$old"
+        trap - HUP INT TERM
         printf '\n' >&2
     else
         IFS= read -r value || value=
@@ -544,6 +547,7 @@ prompt_auth() {
 
     if [ -t 0 ] && [ -t 2 ]; then
         old=$(stty -g)
+        trap 'stty "$old" 2>/dev/null; trap - HUP INT TERM; exit 130' HUP INT TERM
         stty raw -echo
         render_auth_selector "$selected" >&2
         while :; do
@@ -555,12 +559,14 @@ prompt_auth() {
             fi
             if [ "$key" = "$ENTER_KEY" ] || [ -z "$key" ]; then
                 stty "$old"
+                trap - HUP INT TERM
                 printf '\r\n' >&2
                 [ "$selected" -eq 1 ] && printf '%s' "$AUTH_TOKEN" || printf '%s' "$AUTH_API_KEY"
                 return 0
             fi
             if [ "$key" = "$CTRL_C" ] || [ "$key" = "$CTRL_D" ]; then
                 stty "$old"
+                trap - HUP INT TERM
                 printf '\r\n' >&2
                 exit 1
             fi
@@ -722,6 +728,7 @@ cmd_set() {
     created=0
     [ -f "$file" ] || created=1
     env_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-env.XXXXXX") || exit 1
+    trap 'rm -f "$env_updates" "$env_unsets" "$env_tmp"' HUP INT TERM EXIT
     provider_env_to_file "$file" "$env_tmp"
     current_auth=$(conf_get "$file" auth)
     [ -n "$current_auth" ] || current_auth=$AUTH_API_KEY
@@ -823,59 +830,58 @@ verify_request() {
     esac
     command -v curl >/dev/null 2>&1 || die "curl is required for verify"
 
-    body_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-body.XXXXXX") || exit 1
-    err_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-curl.XXXXXX") || exit 1
-    model_json=$(printf '%s' "$model" | json_quote)
-    body='{"model":"'"$model_json"'","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}'
-    url=${base_url%/}/v1/messages
-    if [ "$auth" = "$AUTH_TOKEN" ]; then
-        status=$(curl -sS -m "$VERIFY_TIMEOUT" -o "$body_tmp" -w '%{http_code}' \
-            -X POST "$url" \
-            -H 'anthropic-version: 2023-06-01' \
-            -H 'content-type: application/json' \
-            -H "Authorization: Bearer $key" \
-            --data "$body" 2>"$err_tmp") || {
-            msg=$(sed -n '1p' "$err_tmp")
-            rm -f "$body_tmp" "$err_tmp"
-            printf 'Connection failed: %s\n' "$msg"
-            return 1
-        }
-    else
-        status=$(curl -sS -m "$VERIFY_TIMEOUT" -o "$body_tmp" -w '%{http_code}' \
-            -X POST "$url" \
-            -H 'anthropic-version: 2023-06-01' \
-            -H 'content-type: application/json' \
-            -H "x-api-key: $key" \
-            --data "$body" 2>"$err_tmp") || {
-            msg=$(sed -n '1p' "$err_tmp")
-            rm -f "$body_tmp" "$err_tmp"
-            printf 'Connection failed: %s\n' "$msg"
-            return 1
-        }
-    fi
+    (
+        body_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-body.XXXXXX") || exit 1
+        err_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-curl.XXXXXX") || exit 1
+        trap 'rm -f "$body_tmp" "$err_tmp"' HUP INT TERM EXIT
+        model_json=$(printf '%s' "$model" | json_quote)
+        body='{"model":"'"$model_json"'","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}'
+        url=${base_url%/}/v1/messages
+        if [ "$auth" = "$AUTH_TOKEN" ]; then
+            status=$(curl -sS -m "$VERIFY_TIMEOUT" -o "$body_tmp" -w '%{http_code}' \
+                -X POST "$url" \
+                -H 'anthropic-version: 2023-06-01' \
+                -H 'content-type: application/json' \
+                -H "Authorization: Bearer $key" \
+                --data "$body" 2>"$err_tmp") || {
+                msg=$(sed -n '1p' "$err_tmp")
+                printf 'Connection failed: %s\n' "$msg"
+                exit 1
+            }
+        else
+            status=$(curl -sS -m "$VERIFY_TIMEOUT" -o "$body_tmp" -w '%{http_code}' \
+                -X POST "$url" \
+                -H 'anthropic-version: 2023-06-01' \
+                -H 'content-type: application/json' \
+                -H "x-api-key: $key" \
+                --data "$body" 2>"$err_tmp") || {
+                msg=$(sed -n '1p' "$err_tmp")
+                printf 'Connection failed: %s\n' "$msg"
+                exit 1
+            }
+        fi
 
-    case "$status" in
-        2*) printf 'OK (%s)\n' "$status"; rm -f "$body_tmp" "$err_tmp"; return 0 ;;
-        401) printf 'Authentication failed (401)\n'; rm -f "$body_tmp" "$err_tmp"; return 1 ;;
-        403) printf 'Access denied (403)\n'; rm -f "$body_tmp" "$err_tmp"; return 1 ;;
-        4*)
-            etype=$(sed -n 's/.*"type"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$body_tmp" | sed -n '1p')
-            emsg=$(sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$body_tmp" | sed -n '1p')
-            case " $FATAL_PROVIDER_ERROR_TYPES " in
-                *" $etype "*)
-                    [ -n "$emsg" ] || emsg=$etype
-                    printf 'Provider rejected: %s\n' "$emsg"
-                    rm -f "$body_tmp" "$err_tmp"
-                    return 1
-                    ;;
-            esac
-            printf 'Reachable (HTTP %s)\n' "$status"
-            rm -f "$body_tmp" "$err_tmp"
-            return 0
-            ;;
-        5*) printf 'Server error (HTTP %s)\n' "$status"; rm -f "$body_tmp" "$err_tmp"; return 1 ;;
-        *) printf 'Connection failed: unexpected HTTP status %s\n' "$status"; rm -f "$body_tmp" "$err_tmp"; return 1 ;;
-    esac
+        case "$status" in
+            2*) printf 'OK (%s)\n' "$status"; exit 0 ;;
+            401) printf 'Authentication failed (401)\n'; exit 1 ;;
+            403) printf 'Access denied (403)\n'; exit 1 ;;
+            4*)
+                etype=$(sed -n 's/.*"type"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$body_tmp" | sed -n '1p')
+                emsg=$(sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$body_tmp" | sed -n '1p')
+                case " $FATAL_PROVIDER_ERROR_TYPES " in
+                    *" $etype "*)
+                        [ -n "$emsg" ] || emsg=$etype
+                        printf 'Provider rejected: %s\n' "$emsg"
+                        exit 1
+                        ;;
+                esac
+                printf 'Reachable (HTTP %s)\n' "$status"
+                exit 0
+                ;;
+            5*) printf 'Server error (HTTP %s)\n' "$status"; exit 1 ;;
+            *) printf 'Connection failed: unexpected HTTP status %s\n' "$status"; exit 1 ;;
+        esac
+    )
 }
 
 probe_model() {
@@ -1083,6 +1089,7 @@ main() {
         show) cmd_show "$@" ;;
         rm|remove) cmd_rm "$@" ;;
         -h|--help|help) usage ;;
+        -v|--version|version) printf 'ccs %s\n' "$CCS_VERSION" ;;
         *) die "unknown command: $cmd" ;;
     esac
 }

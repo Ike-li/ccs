@@ -362,6 +362,14 @@ def test_top_level_help_mentions_shell_use_mode(_isolate_home):
     assert "ccs use <name> [--no-verify] [--shell]" in result.stdout
 
 
+def test_version_command_prints_semver(_isolate_home):
+    for flag in ("--version", "-v", "version"):
+        result = run(_isolate_home, flag)
+        assert result.returncode == 0
+        assert result.stdout.startswith("ccs ")
+        assert result.stdout.strip() != "ccs"
+
+
 def test_set_rejects_conflicting_auth_flags(_isolate_home):
     result = run(_isolate_home, "set", "k", "--use-api-key", "--use-auth-token", check=False)
 
