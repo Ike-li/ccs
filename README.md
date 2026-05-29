@@ -31,6 +31,8 @@ ccs set deepseek \
 ccs use deepseek
 ```
 
+![ccs terminal demo](docs/demo.gif)
+
 切换后重启 Claude Code 会话，让新 settings 生效。
 
 不用 Homebrew 时，也可以用安装脚本：
