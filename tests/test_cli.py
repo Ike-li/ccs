@@ -73,6 +73,12 @@ def test_script_is_executable_and_has_valid_shell_syntax(_isolate_home):
     subprocess.run(["sh", "-n", str(CCS)], check=True)
 
 
+def test_version_matches_release_prep(_isolate_home):
+    result = run(_isolate_home, "--version")
+
+    assert result.stdout.strip() == "ccs 0.6.1"
+
+
 def test_init_creates_config_layout(_isolate_home):
     result = run(_isolate_home, "init")
 
@@ -813,3 +819,20 @@ def test_use_fails_when_settings_path_is_not_file_and_keeps_active(_isolate_home
     assert "settings path exists but is not a regular file" in result.stderr
     assert "switched -> new" not in result.stdout
     assert (_isolate_home / ".config/ccs/active").read_text().strip() == "old"
+
+
+def test_rm_active_fails_when_settings_path_is_not_file_and_keeps_state(_isolate_home):
+    settings_file = _isolate_home / ".claude/settings.json"
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "k", "--base-url", "https://k", "--key", "sk-k")
+    run(_isolate_home, "use", "k", "--no-verify")
+
+    settings_file.unlink()
+    settings_file.mkdir()
+    result = run(_isolate_home, "rm", "k", check=False)
+
+    assert result.returncode != 0
+    assert "settings path exists but is not a regular file" in result.stderr
+    assert "removed k" not in result.stdout
+    assert (_isolate_home / ".config/ccs/active").read_text().strip() == "k"
+    assert (_isolate_home / ".config/ccs/providers/k.conf").exists()

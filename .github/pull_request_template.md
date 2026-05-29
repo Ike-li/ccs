@@ -18,6 +18,9 @@
 sh -n bin/ccs install.sh
 shellcheck -s sh bin/ccs install.sh
 uv run --no-project --with pytest pytest tests/test_cli.py
+uv run --no-project --with ruff ruff check tests
+uv run --no-project --with ruff ruff format --check tests
+unsafe='--danger'"ously-skip-permissions"; ! git grep -n -- "$unsafe" README.md docs CONTRIBUTING.md SECURITY.md CHANGELOG.md
 ```
 
 ## Checklist

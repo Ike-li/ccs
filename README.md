@@ -46,7 +46,7 @@ ccs use deepseek
 不用 Homebrew 时，也可以用安装脚本：
 
 ```bash
-CCS_INSTALL_REF=v0.6.0 sh -c "$(curl -fsSL https://raw.githubusercontent.com/Ike-li/ccs/main/install.sh)"
+CCS_INSTALL_REF=v0.6.1 sh -c "$(curl -fsSL https://raw.githubusercontent.com/Ike-li/ccs/main/install.sh)"
 ```
 
 ## 使用场景
@@ -336,7 +336,7 @@ ccs doctor
 正常配置后大致会看到：
 
 ```text
-ccs doctor 0.6.0
+ccs doctor 0.6.1
 ok:   config dir exists: ~/.config/ccs
 ok:   providers configured: 1
 ok:   claude command found

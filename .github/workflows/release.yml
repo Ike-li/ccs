@@ -28,6 +28,8 @@ jobs:
       - name: Validate release inputs
         run: |
           set -eu
+          version=$(sed -n 's/^CCS_VERSION=//p' bin/ccs)
+          test "${GITHUB_REF_NAME}" = "v${version}"
           sh -n bin/ccs
           sh -n install.sh
           shellcheck -s sh bin/ccs install.sh
@@ -46,7 +48,10 @@ jobs:
           cp completions/ccs.bash "$pkg/completions/ccs.bash"
           cp completions/_ccs "$pkg/completions/_ccs"
           cp README.md LICENSE CHANGELOG.md CONTRIBUTING.md SECURITY.md "$pkg/"
-          cp -R docs "$pkg/docs"
+          git ls-files docs | while IFS= read -r path; do
+            mkdir -p "$pkg/$(dirname "$path")"
+            cp "$path" "$pkg/$path"
+          done
           tar -C "$pkg" -czf "dist/ccs-${tag}.tar.gz" .
           (cd dist && sha256sum "ccs-${tag}.tar.gz" >"ccs-${tag}.sha256")
 

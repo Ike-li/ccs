@@ -2,7 +2,7 @@
 
 set -u
 
-CCS_VERSION=0.6.0
+CCS_VERSION=0.6.1
 CCS_DIR=${CCS_DIR:-"$HOME/.config/ccs"}
 PROVIDERS_DIR=$CCS_DIR/providers
 ACTIVE_FILE=$CCS_DIR/active
@@ -676,6 +676,20 @@ set_active() {
     mkdir -p "$CCS_DIR" || die "cannot create $CCS_DIR"
     tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-active.XXXXXX") || exit 1
     printf '%s\n' "$name" >"$tmp" || {
+        rm -f "$tmp"
+        die "cannot write active provider"
+    }
+    chmod 600 "$tmp" 2>/dev/null || true
+    mv "$tmp" "$ACTIVE_FILE" || {
+        rm -f "$tmp"
+        die "cannot update active provider"
+    }
+}
+
+clear_active() {
+    mkdir -p "$CCS_DIR" || die "cannot create $CCS_DIR"
+    tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-active.XXXXXX") || exit 1
+    : >"$tmp" || {
         rm -f "$tmp"
         die "cannot write active provider"
     }
@@ -1409,16 +1423,16 @@ cmd_current() {
 
 cmd_rm() {
     [ "$#" -eq 1 ] || die "provider name is required"
-    name=$1
-    require_provider_name "$name"
-    file=$(provider_file "$name")
-    [ -f "$file" ] || die "no such provider: '$name'"
-    rm -f "$file"
-    if [ "$(active_name)" = "$name" ]; then
-        : >"$ACTIVE_FILE"
+    rm_name=$1
+    require_provider_name "$rm_name"
+    rm_file=$(provider_file "$rm_name")
+    [ -f "$rm_file" ] || die "no such provider: '$rm_name'"
+    if [ "$(active_name)" = "$rm_name" ]; then
         clear_provider_env
+        clear_active
     fi
-    printf 'removed %s\n' "$name"
+    rm -f "$rm_file" || die "cannot remove provider file: $rm_file"
+    printf 'removed %s\n' "$rm_name"
 }
 
 main() {

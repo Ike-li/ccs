@@ -4,6 +4,8 @@ All notable changes to `ccs` are documented here.
 
 ## Unreleased
 
+## v0.6.1 - 2026-05-29
+
 ### Added
 
 - Add a comparison guide for hand-edited settings, shell exports, proxies, gateways, and `ccs`.
@@ -19,10 +21,12 @@ All notable changes to `ccs` are documented here.
 - Add clearer contribution entry points for first-time contributors.
 - Package the full `docs/` directory in future release archives so README links remain valid.
 - Extend DeepSeek and OpenRouter presets with Claude Code subagent/effort env from their provider recipes.
+- Clarify the Hugging Face recipe's single-secret `ccs` behavior against Hugging Face's two-env manual launch example.
 
 ### Fixed
 
 - Fail `ccs use` when `settings.json` cannot be written, and only update the active provider after settings are successfully applied.
+- Fail `ccs rm` without deleting the provider or clearing active state when `settings.json` cannot be rewritten.
 - Preserve existing non-ccs `env` JSON string escapes when rewriting `settings.json`.
 
 ## v0.6.0 - 2026-05-29

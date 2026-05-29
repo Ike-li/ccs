@@ -12,7 +12,7 @@ body:
     attributes:
       label: ccs version
       description: Run `ccs --version`.
-      placeholder: "ccs 0.6.0"
+      placeholder: "ccs 0.6.1"
     validations:
       required: true
   - type: dropdown

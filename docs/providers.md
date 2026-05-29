@@ -84,6 +84,7 @@ ccs use openrouter
 ```
 
 If Claude Code has a cached Anthropic login, OpenRouter recommends running `/logout` once inside Claude Code and restarting the session.
+OpenRouter also recommends blanking `ANTHROPIC_API_KEY` when using `ANTHROPIC_AUTH_TOKEN`; `ccs use openrouter --shell` prints cleanup commands for shell-level conflicts, while the settings writer removes stale managed secret values from `settings.json`.
 
 ## Kimi Code
 
@@ -101,7 +102,7 @@ Older Moonshot Anthropic-compatible endpoints may use a different base URL. Pref
 
 ## Hugging Face Inference Providers
 
-Hugging Face's Claude Code integration uses `https://router.huggingface.co` with `ANTHROPIC_AUTH_TOKEN`.
+Hugging Face's Claude Code integration uses `https://router.huggingface.co`. Its manual environment-variable example currently exports both `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_API_KEY` to the same HF token; `ccs` keeps one active secret env to avoid Claude Code key/token conflicts, so this recipe uses auth-token mode and should be verified with your account.
 
 ```bash
 ccs set hf \
@@ -114,6 +115,8 @@ ccs set hf \
   -e CLAUDE_CODE_SUBAGENT_MODEL=zai-org/GLM-5.1
 ccs use hf
 ```
+
+If Hugging Face changes its Claude Code auth requirements, prefer the upstream `hf-claude` extension or the current Hugging Face guide for that provider-specific launch path.
 
 ## LiteLLM or enterprise gateway
 
