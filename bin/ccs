@@ -2,7 +2,7 @@
 
 set -u
 
-CCS_VERSION=0.4.0
+CCS_VERSION=0.5.0
 CCS_DIR=${CCS_DIR:-"$HOME/.config/ccs"}
 PROVIDERS_DIR=$CCS_DIR/providers
 ACTIVE_FILE=$CCS_DIR/active
@@ -45,6 +45,7 @@ Usage:
                  [--unset-model] [-e K=V] [--unset-env K]
   ccs use <name> [--no-verify] [--shell]
   ccs verify [name]
+  ccs doctor
   ccs ls
   ccs current
   ccs show <name> [--show-key]
@@ -954,6 +955,144 @@ warn_preferred_auth_token() {
     fi
 }
 
+doctor_ok() {
+    printf 'ok:   %s\n' "$1"
+}
+
+doctor_warn() {
+    doctor_warn_count=$((doctor_warn_count + 1))
+    printf 'warn: %s\n' "$1"
+}
+
+doctor_fail() {
+    doctor_fail_count=$((doctor_fail_count + 1))
+    printf 'fail: %s\n' "$1"
+}
+
+cmd_doctor() {
+    [ "$#" -eq 0 ] || die "doctor does not accept arguments"
+
+    doctor_warn_count=0
+    doctor_fail_count=0
+
+    printf 'ccs doctor %s\n' "$CCS_VERSION"
+
+    if [ -d "$CCS_DIR" ]; then
+        doctor_ok "config dir exists: $CCS_DIR"
+    else
+        doctor_warn "config dir is missing: $CCS_DIR (run: ccs init)"
+    fi
+
+    if [ -d "$PROVIDERS_DIR" ]; then
+        provider_count=0
+        for file in "$PROVIDERS_DIR"/*.conf; do
+            [ -e "$file" ] || continue
+            provider_count=$((provider_count + 1))
+        done
+        if [ "$provider_count" -gt 0 ]; then
+            doctor_ok "providers configured: $provider_count"
+        else
+            doctor_warn "no providers configured yet (run: ccs set <name>)"
+        fi
+    else
+        doctor_warn "providers dir is missing: $PROVIDERS_DIR"
+    fi
+
+    if command -v claude >/dev/null 2>&1; then
+        doctor_ok "claude command found"
+    else
+        doctor_warn "claude command not found in PATH"
+    fi
+
+    if command -v curl >/dev/null 2>&1; then
+        doctor_ok "curl command found"
+    else
+        doctor_warn "curl command not found; ccs verify and default ccs use need curl"
+    fi
+
+    settings_dir=$(dirname "$SETTINGS_FILE")
+    if [ -e "$SETTINGS_FILE" ]; then
+        if [ -f "$SETTINGS_FILE" ]; then
+            doctor_ok "settings file exists: $SETTINGS_FILE"
+        else
+            doctor_fail "settings path exists but is not a regular file: $SETTINGS_FILE"
+        fi
+        if [ -r "$SETTINGS_FILE" ]; then
+            doctor_ok "settings file is readable"
+        else
+            doctor_fail "settings file is not readable: $SETTINGS_FILE"
+        fi
+        if [ -w "$SETTINGS_FILE" ]; then
+            doctor_ok "settings file is writable"
+        else
+            doctor_warn "settings file is not writable: $SETTINGS_FILE"
+        fi
+        if grep -Eq '"ANTHROPIC_API_KEY"[[:space:]]*:' "$SETTINGS_FILE" 2>/dev/null &&
+            grep -Eq '"ANTHROPIC_AUTH_TOKEN"[[:space:]]*:' "$SETTINGS_FILE" 2>/dev/null; then
+            doctor_warn "settings file contains both ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN"
+        fi
+    else
+        if [ -d "$settings_dir" ]; then
+            if [ -w "$settings_dir" ]; then
+                doctor_ok "settings dir is writable: $settings_dir"
+            else
+                doctor_warn "settings dir is not writable: $settings_dir"
+            fi
+        else
+            doctor_warn "settings file does not exist yet; ccs use will create it"
+        fi
+    fi
+
+    active=$(active_name)
+    if [ -z "$active" ]; then
+        doctor_warn "no active provider selected (run: ccs use <name>)"
+    else
+        doctor_ok "active provider: $active"
+        active_file=$(provider_file "$active")
+        if [ -f "$active_file" ]; then
+            auth=$(conf_get "$active_file" auth)
+            [ -n "$auth" ] || auth=$AUTH_API_KEY
+            key=$(conf_get "$active_file" key)
+            base_url=$(conf_get "$active_file" ANTHROPIC_BASE_URL)
+            if [ -n "$key" ]; then
+                doctor_ok "active provider key is set: $(masked_key "$key")"
+            else
+                doctor_fail "active provider has empty key: $active"
+            fi
+            if [ -n "$base_url" ]; then
+                case "$base_url" in
+                    http://*|https://*) doctor_ok "active provider base URL: $base_url" ;;
+                    *) doctor_fail "active provider base URL is not http(s): $base_url" ;;
+                esac
+            else
+                doctor_fail "active provider is missing ANTHROPIC_BASE_URL: $active"
+            fi
+            if [ "$auth" = "$AUTH_TOKEN" ]; then
+                doctor_ok "active provider secret env: $ENV_AUTH_TOKEN"
+                if [ "${ANTHROPIC_API_KEY+x}" = x ]; then
+                    doctor_warn "current shell exports ANTHROPIC_API_KEY but active provider uses ANTHROPIC_AUTH_TOKEN"
+                fi
+            else
+                doctor_ok "active provider secret env: $ENV_API_KEY"
+                if [ "${ANTHROPIC_AUTH_TOKEN+x}" = x ]; then
+                    doctor_warn "current shell exports ANTHROPIC_AUTH_TOKEN but active provider uses ANTHROPIC_API_KEY"
+                fi
+                if prefers_auth_token "$base_url"; then
+                    doctor_warn "DeepSeek Claude Code docs use ANTHROPIC_AUTH_TOKEN (run: ccs set $active --use-auth-token && ccs use $active)"
+                fi
+            fi
+        else
+            doctor_fail "active provider file is missing: $active_file"
+        fi
+    fi
+
+    if [ "$doctor_fail_count" -gt 0 ]; then
+        printf 'summary: %s failure(s), %s warning(s)\n' "$doctor_fail_count" "$doctor_warn_count"
+        return 1
+    fi
+    printf 'summary: 0 failure(s), %s warning(s)\n' "$doctor_warn_count"
+}
+
 print_shell_cleanup() {
     seen=' '
     for env_key in $MANAGED_ENV_KEYS; do
@@ -1139,6 +1278,7 @@ main() {
         set) cmd_set "$@" ;;
         use) cmd_use "$@" ;;
         verify) cmd_verify "$@" ;;
+        doctor) cmd_doctor "$@" ;;
         ls|list) cmd_ls "$@" ;;
         current) cmd_current "$@" ;;
         show) cmd_show "$@" ;;

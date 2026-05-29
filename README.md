@@ -1,15 +1,43 @@
 # ccs
 
 [![CI](https://github.com/Ike-li/ccs/actions/workflows/test.yml/badge.svg)](https://github.com/Ike-li/ccs/actions/workflows/test.yml)
+[![Release](https://img.shields.io/github/v/release/Ike-li/ccs?sort=semver)](https://github.com/Ike-li/ccs/releases)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Shell](https://img.shields.io/badge/runtime-POSIX%20sh-2f7d32.svg)](bin/ccs)
 
-Claude Code provider 切换工具。`ccs use <name>` 会把当前 provider 的 `ANTHROPIC_BASE_URL` 和对应 secret 写进 `~/.claude/settings.json`：
+No proxy. No daemon. No Node. Just switch Claude Code providers safely.
 
-- 默认写 `ANTHROPIC_API_KEY`
-- token provider 写 `ANTHROPIC_AUTH_TOKEN`
+`ccs` 是一个极小的 Claude Code provider 切换工具。它不做协议转换、不启动本地代理，只负责把当前 provider 的 `ANTHROPIC_BASE_URL` 和对应 secret 写进 Claude Code 官方支持的 `~/.claude/settings.json`：
 
-这是一个纯 shell 版本，运行时不依赖 Python、Node、jq 或 daemon。macOS 和常见 Linux 发行版自带的 `/bin/sh`、`awk`、`sed`、`stty` 即可运行；只有 `ccs verify` / 默认 `ccs use` 验证请求需要 `curl`。
+- API key provider 写 `ANTHROPIC_API_KEY`
+- Bearer token provider 写 `ANTHROPIC_AUTH_TOKEN`
+
+适合：Anthropic-compatible endpoint、LiteLLM/企业网关、OpenRouter、DeepSeek、Kimi 等已经能直接接 Claude Code 的场景。
+
+不适合：把 OpenAI/Gemini/Ollama 协议转换成 Anthropic Messages API。那是 router/gateway 的工作，不是 `ccs` 的工作。
+
+这是一个纯 shell 版本，运行时不依赖 Python、Node、jq 或 daemon。macOS 和常见 Linux 发行版自带的 `/bin/sh`、`awk`、`sed`、`stty` 即可运行；只有一行安装和 `ccs verify` / 默认 `ccs use` 验证请求需要 `curl`。
+
+## 60 秒上手
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Ike-li/ccs/main/install.sh | sh
+ccs init
+ccs set deepseek \
+  --base-url https://api.deepseek.com/anthropic \
+  --key sk-... \
+  --model 'deepseek-v4-pro[1m]' \
+  --haiku-model deepseek-v4-flash
+ccs use deepseek
+```
+
+切换后重启 Claude Code 会话，让新 settings 生效。
+
+如果要固定安装某个 tag：
+
+```bash
+CCS_INSTALL_REF=v0.5.0 sh -c "$(curl -fsSL https://raw.githubusercontent.com/Ike-li/ccs/main/install.sh)"
+```
 
 ## 功能
 
@@ -20,14 +48,14 @@ Claude Code provider 切换工具。`ccs use <name>` 会把当前 provider 的 `
 - provider 配置保存在 `~/.config/ccs/providers/<name>.conf`
 - `ccs ls` / `ccs current` / `ccs show` 查看配置
 - `ccs verify [name]` 发送一次 Anthropic messages 探测请求
+- `ccs doctor` 检查本机 Claude Code / settings / provider / shell secret 状态
 
 ## 安装
 
-本地仓库内直接安装：
+推荐一行安装到 `~/.local/bin`：
 
 ```bash
-mkdir -p ~/.local/bin
-install -m 755 bin/ccs ~/.local/bin/ccs
+curl -fsSL https://raw.githubusercontent.com/Ike-li/ccs/main/install.sh | sh
 ```
 
 确保 `~/.local/bin` 在 `PATH` 里：
@@ -36,11 +64,20 @@ install -m 755 bin/ccs ~/.local/bin/ccs
 ccs --help
 ```
 
+本地仓库内安装：
+
+```bash
+mkdir -p ~/.local/bin
+install -m 755 bin/ccs ~/.local/bin/ccs
+```
+
 也可以不安装，直接在仓库里运行：
 
 ```bash
 ./bin/ccs --help
 ```
+
+发布和 Homebrew tap 维护见 [docs/releasing.md](docs/releasing.md)。
 
 ### Shell 补全（可选）
 
@@ -71,15 +108,15 @@ ccs init
 交互式添加 provider：
 
 ```bash
-ccs set kimi
+ccs set deepseek
 ```
 
 它会逐项询问：
 
 ```text
-Base URL [https://api.moonshot.cn/anthropic]:
+Base URL:
 Secret env (<-/->, Enter): ANTHROPIC_API_KEY  ANTHROPIC_AUTH_TOKEN
-Key for ANTHROPIC_API_KEY:
+Key for ANTHROPIC_AUTH_TOKEN:
 Model (optional):
 Opus model (optional):
 Sonnet model (optional):
@@ -93,13 +130,13 @@ Haiku model (optional):
 切换 provider：
 
 ```bash
-ccs use kimi
+ccs use deepseek
 ```
 
 `ccs use` 默认会先调用 `ccs verify`。如果只是本地切换、不想发请求：
 
 ```bash
-ccs use kimi --no-verify
+ccs use deepseek --no-verify
 ```
 
 切换后重启 Claude Code 会话，让新 settings 生效。
@@ -111,7 +148,7 @@ unset ANTHROPIC_AUTH_TOKEN
 claude
 ```
 
-需要一次性清理所有 ccs 管理的 `ANTHROPIC_*` 变量时，可以用 `eval "$(ccs use kimi --shell)"`。`--shell` 会照常写入 `settings.json`，并把需要执行的 `unset ...` 输出到 stdout；普通切换日志会写到 stderr，方便 `eval` 安全执行。也可以直接开一个新终端再启动 Claude Code。
+需要一次性清理所有 ccs 管理的 `ANTHROPIC_*` 变量时，可以用 `eval "$(ccs use deepseek --shell)"`。`--shell` 会照常写入 `settings.json`，并把需要执行的 `unset ...` 输出到 stdout；普通切换日志会写到 stderr，方便 `eval` 安全执行。也可以直接开一个新终端再启动 Claude Code。
 
 ## 常用命令
 
@@ -124,6 +161,7 @@ claude
 | `ccs use <name>` | 切换 active provider，默认先 verify |
 | `ccs use <name> --no-verify` | 跳过 verify 直接切换 |
 | `ccs verify [name]` | 单独验证 provider |
+| `ccs doctor` | 本地诊断 settings、active provider、依赖和 shell secret 冲突 |
 | `ccs ls` | 列出 providers |
 | `ccs current` | 显示 active provider |
 | `ccs show <name> [--show-key]` | 显示 provider，默认脱敏 key |
@@ -157,14 +195,13 @@ ccs set anthropic \
 Auth token provider：
 
 ```bash
-ccs set kimi \
-  --base-url https://api.moonshot.cn/anthropic \
-  --key sk-... \
+ccs set openrouter \
+  --base-url https://openrouter.ai/api \
+  --key sk-or-v1-... \
   --use-auth-token \
-  --model kimi-k2.6 \
-  --opus-model kimi-k2.6 \
-  --sonnet-model kimi-k2.6 \
-  --haiku-model kimi-k2.6
+  --opus-model '~anthropic/claude-opus-latest' \
+  --sonnet-model '~anthropic/claude-sonnet-latest' \
+  --haiku-model '~anthropic/claude-haiku-latest'
 ```
 
 DeepSeek 的 Claude Code 接入文档使用 `ANTHROPIC_AUTH_TOKEN` / Bearer auth。`ccs set` 遇到官方 Anthropic 兼容地址会默认选 auth token；如果已有旧配置写成了 API key 模式，可以这样切换：
@@ -174,11 +211,13 @@ ccs set ds --use-auth-token
 ccs use ds
 ```
 
+更多 provider 配方见 [docs/providers.md](docs/providers.md)。
+
 不想让 key 出现在 shell history，可以从 stdin 读取：
 
 ```bash
-printf '%s\n' 'sk-...' | ccs set kimi \
-  --base-url https://api.moonshot.cn/anthropic \
+printf '%s\n' 'sk-or-v1-...' | ccs set openrouter \
+  --base-url https://openrouter.ai/api \
   --key - \
   --use-auth-token
 ```
@@ -227,6 +266,21 @@ ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-haiku-4-5
 `CCS_VERIFY_TIMEOUT` 可以调整超时秒数，默认 10 秒。
 
 探测模型优先使用 `ANTHROPIC_MODEL`，如果没配置，会依次使用 `ANTHROPIC_DEFAULT_OPUS_MODEL`、`ANTHROPIC_DEFAULT_SONNET_MODEL`、`ANTHROPIC_DEFAULT_HAIKU_MODEL`，最后才回退到内置 probe model。
+
+## Doctor
+
+`ccs doctor` 做本地诊断，不会发网络请求：
+
+- `claude` / `curl` 是否在 `PATH`
+- `~/.config/ccs` 和 provider 数量
+- `~/.claude/settings.json` 是否可读写
+- active provider 是否存在、是否有 key 和 base URL
+- 当前 shell 是否 export 了另一种 secret
+- DeepSeek provider 是否仍在使用 API key 模式
+
+```bash
+ccs doctor
+```
 
 ## 故障排查
 

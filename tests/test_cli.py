@@ -403,7 +403,9 @@ def test_ls_widens_columns_for_long_provider_names(_isolate_home):
     long_line = next(line for line in listing.splitlines() if "very-long-provider-name" in line)
     short_line = next(line for line in listing.splitlines() if line.endswith("<len=4>") and "very-long" not in line)
     header_line = next(line for line in listing.splitlines() if "Name" in line and "Base URL" in line)
-    assert long_line.index("ANTHROPIC_API_KEY") == short_line.index("ANTHROPIC_API_KEY") == header_line.index("Secret env")
+    assert (
+        long_line.index("ANTHROPIC_API_KEY") == short_line.index("ANTHROPIC_API_KEY") == header_line.index("Secret env")
+    )
 
 
 def test_set_help_uses_simple_auth_flags(_isolate_home):
@@ -422,6 +424,7 @@ def test_top_level_help_mentions_shell_use_mode(_isolate_home):
     result = run(_isolate_home, "--help")
 
     assert "ccs use <name> [--no-verify] [--shell]" in result.stdout
+    assert "ccs doctor" in result.stdout
 
 
 def test_version_command_prints_semver(_isolate_home):
@@ -597,6 +600,64 @@ def test_set_rejects_invalid_provider_name(_isolate_home):
     result = run(_isolate_home, "set", "../etc", "--base-url", "https://x", "--key", "k", check=False)
     assert result.returncode != 0
     assert "provider name may only contain" in result.stderr
+
+
+def test_doctor_reports_active_provider_without_failures(_isolate_home):
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "k", "--base-url", "https://k.example", "--key", "sk-k")
+    run(_isolate_home, "use", "k", "--no-verify")
+
+    result = run(_isolate_home, "doctor")
+
+    assert result.returncode == 0
+    assert "ccs doctor" in result.stdout
+    assert "ok:   active provider: k" in result.stdout
+    assert "ok:   active provider base URL: https://k.example" in result.stdout
+    assert "summary: 0 failure(s)" in result.stdout
+
+
+def test_doctor_fails_when_active_provider_file_is_missing(_isolate_home):
+    run(_isolate_home, "init")
+    (_isolate_home / ".config/ccs/active").write_text("ghost\n")
+
+    result = run(_isolate_home, "doctor", check=False)
+
+    assert result.returncode == 1
+    assert "fail: active provider file is missing" in result.stdout
+    assert "summary: 1 failure(s)" in result.stdout
+
+
+def test_doctor_warns_about_current_shell_secret_conflict(_isolate_home):
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "api", "--base-url", "https://api.example", "--key", "sk-api")
+    run(_isolate_home, "use", "api", "--no-verify")
+
+    result = run(_isolate_home, "doctor", env_extra={"ANTHROPIC_AUTH_TOKEN": "shell-token"})
+
+    assert result.returncode == 0
+    assert "current shell exports ANTHROPIC_AUTH_TOKEN but active provider uses ANTHROPIC_API_KEY" in result.stdout
+    assert "shell-token" not in result.stdout
+
+
+def test_doctor_warns_when_deepseek_provider_uses_api_key(_isolate_home):
+    run(_isolate_home, "init")
+    run(
+        _isolate_home,
+        "set",
+        "ds",
+        "--base-url",
+        "https://api.deepseek.com/anthropic",
+        "--key",
+        "sk-ds",
+        "--use-api-key",
+    )
+    run(_isolate_home, "use", "ds", "--no-verify")
+
+    result = run(_isolate_home, "doctor")
+
+    assert result.returncode == 0
+    assert "DeepSeek Claude Code docs use ANTHROPIC_AUTH_TOKEN" in result.stdout
+    assert "ccs set ds --use-auth-token && ccs use ds" in result.stdout
 
 
 def test_rm_non_active_provider_does_not_touch_settings(_isolate_home):

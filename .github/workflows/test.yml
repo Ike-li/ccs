@@ -34,7 +34,9 @@ jobs:
           python -m pip install pytest
 
       - name: Shell syntax
-        run: sh -n bin/ccs
+        run: |
+          sh -n bin/ccs
+          sh -n install.sh
 
       - name: Run pytest
         run: pytest tests/ -q
@@ -55,10 +57,12 @@ jobs:
           sudo apt-get update && sudo apt-get install -y shellcheck
 
       - name: Shell syntax
-        run: sh -n bin/ccs
+        run: |
+          sh -n bin/ccs
+          sh -n install.sh
 
       - name: Shellcheck
-        run: shellcheck -s sh bin/ccs
+        run: shellcheck -s sh bin/ccs install.sh
 
       - name: Ruff check
         run: ruff check tests
