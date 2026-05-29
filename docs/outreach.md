@@ -66,6 +66,14 @@ Submission checklist:
 - Mention the no-proxy boundary so maintainers do not mistake it for a router.
 - Avoid claiming support for non-Anthropic-compatible APIs without a gateway.
 
+## Submission log
+
+Submitted on 2026-05-29:
+
+- [jqueryscript/awesome-claude-code#337](https://github.com/jqueryscript/awesome-claude-code/pull/337) - adds `ccs` under Tools & Utilities.
+- [rohitg00/awesome-claude-code-toolkit#468](https://github.com/rohitg00/awesome-claude-code-toolkit/pull/468) - adds `ccs` under Ecosystem.
+- [Ike-li/ccs discussion #1](https://github.com/Ike-li/ccs/discussions/1) - Chinese announcement post.
+
 ## 中文社区帖子草稿
 
 标题：
