@@ -34,7 +34,7 @@ Do not use `ccs` as the main tool when:
 
 - **Fast first run**: `brew install Ike-li/tap/ccs`, `ccs preset deepseek --key ...`, `ccs use deepseek`.
 - **Low operational surface**: no background process, no listening port, no runtime dependency.
-- **Claude Code-specific semantics**: knows `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL`, and `/model` alias env vars.
+- **Claude Code-specific semantics**: knows `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, model alias env vars, and provider-scoped Claude Code subagent/effort env.
 - **Conflict diagnosis**: `ccs doctor` checks settings, active provider, shell secret conflicts, and common provider mistakes.
 - **Reviewable state**: provider files are plain `KEY=value`; the active provider is explicit.
 - **Safe switching behavior**: when switching auth modes, `ccs` removes the other managed secret env from `settings.json`.

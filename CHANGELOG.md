@@ -10,12 +10,20 @@ All notable changes to `ccs` are documented here.
 - Add GitHub issue forms for bugs, feature requests, and provider recipes.
 - Add a pull request template with verification and secret-handling checklist items.
 - Add outreach copy for GitHub topics, awesome-list submissions, and Chinese community posts.
+- Add support for provider-scoped `CLAUDE_CODE_SUBAGENT_MODEL` and `CLAUDE_CODE_EFFORT_LEVEL`.
+- Add release preflight checks so tagged releases run syntax, ShellCheck, pytest, and tracked-doc safety validation before packaging.
 
 ### Changed
 
 - Rework the README first screen around fast positioning, use cases, comparison, and SEO keywords.
 - Add clearer contribution entry points for first-time contributors.
 - Package the full `docs/` directory in future release archives so README links remain valid.
+- Extend DeepSeek and OpenRouter presets with Claude Code subagent/effort env from their provider recipes.
+
+### Fixed
+
+- Fail `ccs use` when `settings.json` cannot be written, and only update the active provider after settings are successfully applied.
+- Preserve existing non-ccs `env` JSON string escapes when rewriting `settings.json`.
 
 ## v0.6.0 - 2026-05-29
 

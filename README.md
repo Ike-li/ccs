@@ -70,7 +70,7 @@ CCS_INSTALL_REF=v0.6.0 sh -c "$(curl -fsSL https://raw.githubusercontent.com/Ike
 
 ## 功能
 
-- `ccs set` 逐项填写 provider：name、base URL、secret env、key、默认模型和 `/model` alias 映射
+- `ccs set` 逐项填写 provider：name、base URL、secret env、key、默认模型、`/model` alias 和 Claude Code 子 agent env
 - `ccs set <name> ...` 支持脚本式创建或更新
 - `ccs preset <deepseek|openrouter>` 用内置 recipe 快速创建常见 provider
 - `ccs use <name>` 写入 Claude Code 的 `settings.json`
@@ -184,7 +184,7 @@ unset ANTHROPIC_AUTH_TOKEN
 claude
 ```
 
-需要一次性清理所有 ccs 管理的 `ANTHROPIC_*` 变量时，可以用 `eval "$(ccs use deepseek --shell)"`。`--shell` 会照常写入 `settings.json`，并把需要执行的 `unset ...` 输出到 stdout；普通切换日志会写到 stderr，方便 `eval` 安全执行。也可以直接开一个新终端再启动 Claude Code。
+需要一次性清理所有 ccs 管理的 provider env 时，可以用 `eval "$(ccs use deepseek --shell)"`。`--shell` 会照常写入 `settings.json`，并把需要执行的 `unset ...` 输出到 stdout；普通切换日志会写到 stderr，方便 `eval` 安全执行。也可以直接开一个新终端再启动 Claude Code。
 
 ## 常用命令
 
@@ -214,10 +214,12 @@ ccs set <name> --sonnet-model claude-sonnet-4-6
 ccs set <name> --haiku-model claude-haiku-4-5
 ccs set <name> --unset-model
 ccs set <name> -e ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-4-6
+ccs set <name> -e CLAUDE_CODE_SUBAGENT_MODEL=claude-haiku-4-5
+ccs set <name> -e CLAUDE_CODE_EFFORT_LEVEL=max
 ccs set <name> --unset-env ANTHROPIC_DEFAULT_SONNET_MODEL
 ```
 
-`--unset-model` 只清理 `ANTHROPIC_MODEL`。如果要清理 Opus/Sonnet/Haiku alias 映射，继续用 `--unset-env ANTHROPIC_DEFAULT_*_MODEL`，这样高级模型元数据变量也保持同一套清理方式。
+`--unset-model` 只清理 `ANTHROPIC_MODEL`。如果要清理 Opus/Sonnet/Haiku alias、Claude Code subagent model 或 effort level，继续用 `--unset-env KEY`，这样高级模型元数据变量也保持同一套清理方式。
 
 ## 脚本用法
 
@@ -239,7 +241,8 @@ ccs set openrouter \
   --use-auth-token \
   --opus-model '~anthropic/claude-opus-latest' \
   --sonnet-model '~anthropic/claude-sonnet-latest' \
-  --haiku-model '~anthropic/claude-haiku-latest'
+  --haiku-model '~anthropic/claude-haiku-latest' \
+  -e CLAUDE_CODE_SUBAGENT_MODEL='~anthropic/claude-opus-latest'
 ```
 
 DeepSeek 的 Claude Code 接入文档使用 `ANTHROPIC_AUTH_TOKEN` / Bearer auth。`ccs set` 遇到官方 Anthropic 兼容地址会默认选 auth token；如果已有旧配置写成了 API key 模式，可以这样切换：
@@ -284,6 +287,8 @@ printf '%s\n' 'sk-or-v1-...' | ccs set openrouter \
     ANTHROPIC_DEFAULT_OPUS_MODEL:    ...  # 可选，/model opus alias
     ANTHROPIC_DEFAULT_SONNET_MODEL:  ...  # 可选，/model sonnet alias
     ANTHROPIC_DEFAULT_HAIKU_MODEL:   ...  # 可选，/model haiku alias
+    CLAUDE_CODE_SUBAGENT_MODEL:      ...  # 可选，子 agent 模型
+    CLAUDE_CODE_EFFORT_LEVEL:        ...  # 可选，provider 建议的 effort level
 ```
 
 provider 文件是简单的 `KEY=value`：
@@ -296,9 +301,10 @@ ANTHROPIC_MODEL=claude-sonnet-4-6
 ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-7
 ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-4-6
 ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-haiku-4-5
+CLAUDE_CODE_SUBAGENT_MODEL=claude-haiku-4-5
 ```
 
-`ccs` 写入 settings 时会移除它管理的 `ANTHROPIC_*` 变量和旧的 `apiKeyHelper`，再写入当前 provider；其他顶层字段和非 ccs 管理的 `env` 会保留。
+`ccs` 写入 settings 时会移除它管理的 provider env 和旧的 `apiKeyHelper`，再写入当前 provider；其他顶层字段和非 ccs 管理的 `env` 会保留。
 
 ## Verify
 

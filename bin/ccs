@@ -15,7 +15,7 @@ ENV_AUTH_TOKEN=ANTHROPIC_AUTH_TOKEN
 VERIFY_TIMEOUT=${CCS_VERIFY_TIMEOUT:-10}
 VERIFY_PROBE_MODEL=${CCS_VERIFY_PROBE_MODEL:-claude-sonnet-4-6}
 
-PROVIDER_ENV_KEYS="ANTHROPIC_BASE_URL ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL_NAME ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES ANTHROPIC_DEFAULT_SONNET_MODEL_NAME ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES ANTHROPIC_CUSTOM_MODEL_OPTION ANTHROPIC_CUSTOM_MODEL_OPTION_NAME ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION ANTHROPIC_CUSTOM_MODEL_OPTION_SUPPORTED_CAPABILITIES"
+PROVIDER_ENV_KEYS="ANTHROPIC_BASE_URL ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL_NAME ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES ANTHROPIC_DEFAULT_SONNET_MODEL_NAME ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES ANTHROPIC_CUSTOM_MODEL_OPTION ANTHROPIC_CUSTOM_MODEL_OPTION_NAME ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION ANTHROPIC_CUSTOM_MODEL_OPTION_SUPPORTED_CAPABILITIES CLAUDE_CODE_SUBAGENT_MODEL CLAUDE_CODE_EFFORT_LEVEL"
 MANAGED_ENV_KEYS="$PROVIDER_ENV_KEYS $ENV_API_KEY $ENV_AUTH_TOKEN"
 FATAL_PROVIDER_ERROR_TYPES="authentication_error invalid_api_key model_not_found not_found_error permission_error"
 
@@ -70,8 +70,8 @@ Options:
   --sonnet-model M      ANTHROPIC_DEFAULT_SONNET_MODEL alias mapping
   --haiku-model M       ANTHROPIC_DEFAULT_HAIKU_MODEL alias mapping
   --unset-model         remove ANTHROPIC_MODEL
-  -e, --env K=V         extra ANTHROPIC_* env
-  --unset-env K         remove an ANTHROPIC_* env key
+  -e, --env K=V         extra supported provider env
+  --unset-env K         remove a supported provider env key
   --help                show this help
 EOF
 }
@@ -190,7 +190,10 @@ env_file_set() {
     if [ -n "$value" ]; then
         printf '%s=%s\n' "$key" "$value" >>"$tmp"
     fi
-    mv "$tmp" "$file"
+    mv "$tmp" "$file" || {
+        rm -f "$tmp"
+        die "cannot update $file"
+    }
 }
 
 env_file_unset() {
@@ -198,7 +201,10 @@ env_file_unset() {
     key=$2
     tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-env.XXXXXX") || exit 1
     awk -v k="$key" 'index($0, k "=") != 1 { print }' "$file" >"$tmp"
-    mv "$tmp" "$file"
+    mv "$tmp" "$file" || {
+        rm -f "$tmp"
+        die "cannot update $file"
+    }
 }
 
 env_file_get() {
@@ -245,7 +251,9 @@ write_provider() {
                 order[16] = "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME"
                 order[17] = "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION"
                 order[18] = "ANTHROPIC_CUSTOM_MODEL_OPTION_SUPPORTED_CAPABILITIES"
-                for (i = 1; i <= 18; i++) {
+                order[19] = "CLAUDE_CODE_SUBAGENT_MODEL"
+                order[20] = "CLAUDE_CODE_EFFORT_LEVEL"
+                for (i = 1; i <= 20; i++) {
                     key = order[i]
                     if (key in values) print key "=" values[key]
                 }
@@ -253,7 +261,10 @@ write_provider() {
         ' "$env_file"
     } >"$tmp"
     chmod 600 "$tmp" 2>/dev/null || true
-    mv "$tmp" "$file"
+    mv "$tmp" "$file" || {
+        rm -f "$tmp"
+        die "cannot write provider file $file"
+    }
 }
 
 json_quote() {
@@ -372,7 +383,7 @@ settings_parse() {
         function is_managed(key) {
             return index(managed, " " key " ") > 0
         }
-        function emit_env(vs, ve,    i, key_start, key_end, key, colon, value_start, value_end, raw_value, value) {
+        function emit_env(vs, ve,    i, key_start, key_end, key, colon, value_start, value_end, raw_value) {
             if (substr(s, skip_ws(vs), 1) != "{") return
             i = skip_ws(vs) + 1
             while (i < ve) {
@@ -388,9 +399,7 @@ settings_parse() {
                 value_end = scan_value(value_start)
                 raw_value = substr(s, value_start, value_end - value_start)
                 if (substr(raw_value, 1, 1) == "\"" && !is_managed(key)) {
-                    value = unquote(raw_value)
-                    gsub(/\n/, "\\n", value)
-                    printf "%s\t%s\n", key, value
+                    printf "%s\t%s\n", key, raw_value
                 }
                 i = skip_ws(value_end)
                 if (substr(s, i, 1) == ",") i++
@@ -431,6 +440,11 @@ settings_parse() {
 write_settings_json() {
     other_file=$1
     env_file=$2
+    settings_dir=$(dirname "$SETTINGS_FILE")
+    if [ -e "$SETTINGS_FILE" ] && [ ! -f "$SETTINGS_FILE" ]; then
+        die "settings path exists but is not a regular file: $SETTINGS_FILE"
+    fi
+    mkdir -p "$settings_dir" || die "cannot create settings directory"
     tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-settings.XXXXXX") || exit 1
     {
         printf '{\n'
@@ -448,24 +462,53 @@ write_settings_json() {
         fi
         printf '  "env": {\n'
         env_first=1
-        while IFS= read -r line; do
-            [ -n "$line" ] || continue
-            key=${line%%=*}
-            value=${line#*=}
+        tab=$(printf '\t')
+        while IFS="$tab" read -r key raw_value; do
+            [ -n "$key" ] || continue
             if [ "$env_first" -eq 0 ]; then
                 printf ',\n'
             fi
-            printf '    "%s": "' "$key"
-            printf '%s' "$value" | json_quote
-            printf '"'
+            printf '    "'
+            printf '%s' "$key" | json_quote
+            printf '": %s' "$raw_value"
             env_first=0
         done <"$env_file"
         printf '\n  }\n'
         printf '}\n'
-    } >"$tmp"
-    mkdir -p "$(dirname "$SETTINGS_FILE")" || die "cannot create settings directory"
+    } >"$tmp" || {
+        rm -f "$tmp"
+        die "cannot write temporary settings file"
+    }
     chmod 600 "$tmp" 2>/dev/null || true
-    mv "$tmp" "$SETTINGS_FILE"
+    mv "$tmp" "$SETTINGS_FILE" || {
+        rm -f "$tmp"
+        die "cannot write settings file: $SETTINGS_FILE"
+    }
+}
+
+settings_env_set() {
+    file=$1
+    key=$2
+    value=$3
+    tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-env.XXXXXX") || exit 1
+    awk -F '\t' -v k="$key" '$1 != k { print }' "$file" >"$tmp" || {
+        rm -f "$tmp"
+        die "cannot update temporary env file"
+    }
+    if [ -n "$value" ]; then
+        {
+            printf '%s\t"' "$key"
+            printf '%s' "$value" | json_quote
+            printf '"\n'
+        } >>"$tmp" || {
+            rm -f "$tmp"
+            die "cannot update temporary env file"
+        }
+    fi
+    mv "$tmp" "$file" || {
+        rm -f "$tmp"
+        die "cannot update $file"
+    }
 }
 
 apply_provider() {
@@ -487,17 +530,15 @@ apply_provider() {
     provider_env_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-provider-env.XXXXXX") || exit 1
 
     settings_parse other "$SETTINGS_FILE" >"$other_tmp"
-    settings_parse env "$SETTINGS_FILE" | awk -F '\t' -v managed=" $MANAGED_ENV_KEYS " '
-        index(managed, " " $1 " ") == 0 { print $1 "=" substr($0, length($1) + 2) }
-    ' >"$env_tmp"
+    settings_parse env "$SETTINGS_FILE" >"$env_tmp"
 
     provider_env_to_file "$provider_path" "$provider_env_tmp"
     while IFS= read -r line; do
         [ -n "$line" ] || continue
-        env_file_set "$env_tmp" "${line%%=*}" "${line#*=}"
+        settings_env_set "$env_tmp" "${line%%=*}" "${line#*=}"
     done <"$provider_env_tmp"
 
-    env_file_set "$env_tmp" "$(secret_env_name "$auth")" "$provider_key"
+    settings_env_set "$env_tmp" "$(secret_env_name "$auth")" "$provider_key"
     write_settings_json "$other_tmp" "$env_tmp"
     rm -f "$env_tmp" "$other_tmp" "$provider_env_tmp"
     trap - HUP INT TERM EXIT
@@ -510,9 +551,7 @@ clear_provider_env() {
     env_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-env.XXXXXX") || exit 1
     other_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-other.XXXXXX") || exit 1
     settings_parse other "$SETTINGS_FILE" >"$other_tmp"
-    settings_parse env "$SETTINGS_FILE" | awk -F '\t' -v managed=" $MANAGED_ENV_KEYS " '
-        index(managed, " " $1 " ") == 0 { print $1 "=" substr($0, length($1) + 2) }
-    ' >"$env_tmp"
+    settings_parse env "$SETTINGS_FILE" >"$env_tmp"
     write_settings_json "$other_tmp" "$env_tmp"
     rm -f "$env_tmp" "$other_tmp"
     trap - HUP INT TERM EXIT
@@ -630,6 +669,21 @@ prompt_auth() {
 
 active_name() {
     [ -f "$ACTIVE_FILE" ] && sed -n '1p' "$ACTIVE_FILE"
+}
+
+set_active() {
+    name=$1
+    mkdir -p "$CCS_DIR" || die "cannot create $CCS_DIR"
+    tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-active.XXXXXX") || exit 1
+    printf '%s\n' "$name" >"$tmp" || {
+        rm -f "$tmp"
+        die "cannot write active provider"
+    }
+    chmod 600 "$tmp" 2>/dev/null || true
+    mv "$tmp" "$ACTIVE_FILE" || {
+        rm -f "$tmp"
+        die "cannot update active provider"
+    }
 }
 
 cmd_init() {
@@ -919,7 +973,9 @@ cmd_preset() {
                 --model "deepseek-v4-pro[1m]" \
                 --opus-model "deepseek-v4-pro[1m]" \
                 --sonnet-model "deepseek-v4-pro[1m]" \
-                --haiku-model "deepseek-v4-flash"
+                --haiku-model "deepseek-v4-flash" \
+                -e "CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash" \
+                -e "CLAUDE_CODE_EFFORT_LEVEL=max"
             ;;
         openrouter)
             [ -n "$preset_name" ] || preset_name=openrouter
@@ -930,7 +986,8 @@ cmd_preset() {
                 --use-auth-token \
                 --opus-model "~anthropic/claude-opus-latest" \
                 --sonnet-model "~anthropic/claude-sonnet-latest" \
-                --haiku-model "~anthropic/claude-haiku-latest"
+                --haiku-model "~anthropic/claude-haiku-latest" \
+                -e "CLAUDE_CODE_SUBAGENT_MODEL=~anthropic/claude-opus-latest"
             ;;
         *)
             die "unknown preset: $preset"
@@ -1238,9 +1295,8 @@ cmd_use() {
         use_note "verify: $msg"
     fi
 
-    printf '%s\n' "$name" >"$ACTIVE_FILE"
-    chmod 600 "$ACTIVE_FILE" 2>/dev/null || true
     apply_provider "$name"
+    set_active "$name"
     use_note "switched -> $name"
     use_note "base_url: $base_url"
     warn_preferred_auth_token "$name" "$auth" "$base_url"

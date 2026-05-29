@@ -10,17 +10,27 @@ This project is a single POSIX shell script plus completions and docs. Releases 
 
 ```bash
 sh -n bin/ccs install.sh
+shellcheck -s sh bin/ccs install.sh
 uv run --no-project --with pytest pytest tests/test_cli.py
+ruff check tests
+ruff format --check tests
 ```
 
-4. Create and push a signed or annotated tag:
+4. Confirm tracked docs do not contain unsafe permission-bypass examples:
+
+```bash
+unsafe='--danger'"ously-skip-permissions"
+! git grep -n -- "$unsafe" README.md docs CONTRIBUTING.md SECURITY.md CHANGELOG.md
+```
+
+5. Create and push a signed or annotated tag:
 
 ```bash
 git tag -a v0.6.0 -m "ccs v0.6.0"
 git push origin main v0.6.0
 ```
 
-The release workflow creates:
+The release workflow reruns syntax checks, ShellCheck, pytest, and tracked-doc safety validation before it creates:
 
 - `ccs-vX.Y.Z.tar.gz`
 - `ccs-vX.Y.Z.sha256`

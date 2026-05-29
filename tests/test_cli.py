@@ -263,6 +263,28 @@ def test_settings_json_preserves_unrelated_fields_and_env(_isolate_home):
     assert "old" not in raw
 
 
+def test_settings_json_preserves_unrelated_env_json_escapes(_isolate_home):
+    settings_file = _isolate_home / ".claude/settings.json"
+    settings_file.parent.mkdir(parents=True)
+    settings_file.write_text(
+        '{"env":{"CUSTOM_UNICODE":"x\\u0026y","CUSTOM_NEWLINE":"a\\nb","CUSTOM_TAB":"a\\tb","ANTHROPIC_API_KEY":"old"}}'
+    )
+
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "k", "--base-url", "https://k.example", "--key", "sk-X")
+    run(_isolate_home, "use", "k", "--no-verify")
+
+    raw = settings_file.read_text()
+    data = json.loads(raw)
+    assert '"CUSTOM_UNICODE": "x\\u0026y"' in raw
+    assert '"CUSTOM_NEWLINE": "a\\nb"' in raw
+    assert '"CUSTOM_TAB": "a\\tb"' in raw
+    assert data["env"]["CUSTOM_UNICODE"] == "x&y"
+    assert data["env"]["CUSTOM_NEWLINE"] == "a\nb"
+    assert data["env"]["CUSTOM_TAB"] == "a\tb"
+    assert data["env"]["ANTHROPIC_API_KEY"] == "sk-X"
+
+
 def test_set_updates_active_provider_and_reapplies_settings(_isolate_home):
     run(_isolate_home, "init")
     run(_isolate_home, "set", "k", "--base-url", "https://old.example", "--key", "sk-old")
@@ -289,6 +311,8 @@ def test_set_updates_active_provider_and_reapplies_settings(_isolate_home):
         "ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION=Opus through provider",
         "-e",
         "ANTHROPIC_CUSTOM_MODEL_OPTION=provider-custom-model",
+        "-e",
+        "CLAUDE_CODE_SUBAGENT_MODEL=provider-subagent-model",
     )
 
     conf = provider_conf(_isolate_home, "k")
@@ -301,6 +325,7 @@ def test_set_updates_active_provider_and_reapplies_settings(_isolate_home):
     assert conf["ANTHROPIC_DEFAULT_HAIKU_MODEL"] == "claude-haiku-4-5"
     assert conf["ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION"] == "Opus through provider"
     assert conf["ANTHROPIC_CUSTOM_MODEL_OPTION"] == "provider-custom-model"
+    assert conf["CLAUDE_CODE_SUBAGENT_MODEL"] == "provider-subagent-model"
     assert data["env"]["ANTHROPIC_BASE_URL"] == "https://new.example"
     assert data["env"]["ANTHROPIC_AUTH_TOKEN"] == "sk-new"
     assert data["env"]["ANTHROPIC_MODEL"] == "claude-sonnet-4-6"
@@ -309,6 +334,7 @@ def test_set_updates_active_provider_and_reapplies_settings(_isolate_home):
     assert data["env"]["ANTHROPIC_DEFAULT_HAIKU_MODEL"] == "claude-haiku-4-5"
     assert data["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION"] == "Opus through provider"
     assert data["env"]["ANTHROPIC_CUSTOM_MODEL_OPTION"] == "provider-custom-model"
+    assert data["env"]["CLAUDE_CODE_SUBAGENT_MODEL"] == "provider-subagent-model"
     assert "ANTHROPIC_API_KEY" not in data["env"]
 
 
@@ -326,17 +352,30 @@ def test_unset_model_and_extra_env(_isolate_home):
         "model-a",
         "-e",
         "ANTHROPIC_DEFAULT_OPUS_MODEL=model-opus",
+        "-e",
+        "CLAUDE_CODE_SUBAGENT_MODEL=subagent-model",
     )
     run(_isolate_home, "use", "k", "--no-verify")
 
-    run(_isolate_home, "set", "k", "--unset-model", "--unset-env", "ANTHROPIC_DEFAULT_OPUS_MODEL")
+    run(
+        _isolate_home,
+        "set",
+        "k",
+        "--unset-model",
+        "--unset-env",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        "--unset-env",
+        "CLAUDE_CODE_SUBAGENT_MODEL",
+    )
 
     conf = provider_conf(_isolate_home, "k")
     data = settings(_isolate_home)
     assert "ANTHROPIC_MODEL" not in conf
     assert "ANTHROPIC_DEFAULT_OPUS_MODEL" not in conf
+    assert "CLAUDE_CODE_SUBAGENT_MODEL" not in conf
     assert "ANTHROPIC_MODEL" not in data["env"]
     assert "ANTHROPIC_DEFAULT_OPUS_MODEL" not in data["env"]
+    assert "CLAUDE_CODE_SUBAGENT_MODEL" not in data["env"]
 
 
 def test_rm_active_provider_clears_managed_env(_isolate_home):
@@ -618,7 +657,11 @@ def test_preset_deepseek_configures_provider(_isolate_home):
     assert conf["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "deepseek-v4-pro[1m]"
     assert conf["ANTHROPIC_DEFAULT_SONNET_MODEL"] == "deepseek-v4-pro[1m]"
     assert conf["ANTHROPIC_DEFAULT_HAIKU_MODEL"] == "deepseek-v4-flash"
+    assert conf["CLAUDE_CODE_SUBAGENT_MODEL"] == "deepseek-v4-flash"
+    assert conf["CLAUDE_CODE_EFFORT_LEVEL"] == "max"
     assert data["env"]["ANTHROPIC_AUTH_TOKEN"] == "sk-ds"
+    assert data["env"]["CLAUDE_CODE_SUBAGENT_MODEL"] == "deepseek-v4-flash"
+    assert data["env"]["CLAUDE_CODE_EFFORT_LEVEL"] == "max"
     assert "ANTHROPIC_API_KEY" not in data["env"]
 
 
@@ -626,8 +669,10 @@ def test_preset_openrouter_supports_custom_name_and_stdin_key(_isolate_home):
     run(_isolate_home, "init")
 
     result = run(_isolate_home, "preset", "openrouter", "--name", "or", "--key", "-", input_text="sk-or\n")
+    run(_isolate_home, "use", "or", "--no-verify")
 
     conf = provider_conf(_isolate_home, "or")
+    data = settings(_isolate_home)
     assert "created or" in result.stdout
     assert conf["auth"] == "auth_token"
     assert conf["key"] == "sk-or"
@@ -635,6 +680,8 @@ def test_preset_openrouter_supports_custom_name_and_stdin_key(_isolate_home):
     assert conf["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "~anthropic/claude-opus-latest"
     assert conf["ANTHROPIC_DEFAULT_SONNET_MODEL"] == "~anthropic/claude-sonnet-latest"
     assert conf["ANTHROPIC_DEFAULT_HAIKU_MODEL"] == "~anthropic/claude-haiku-latest"
+    assert conf["CLAUDE_CODE_SUBAGENT_MODEL"] == "~anthropic/claude-opus-latest"
+    assert data["env"]["CLAUDE_CODE_SUBAGENT_MODEL"] == "~anthropic/claude-opus-latest"
 
 
 def test_preset_rejects_unknown_provider(_isolate_home):
@@ -749,3 +796,20 @@ def test_use_with_corrupt_settings_json(_isolate_home):
     data = settings(_isolate_home)
     assert data["env"]["ANTHROPIC_BASE_URL"] == "https://k"
     assert data["env"]["ANTHROPIC_API_KEY"] == "sk-k"
+
+
+def test_use_fails_when_settings_path_is_not_file_and_keeps_active(_isolate_home):
+    settings_file = _isolate_home / ".claude/settings.json"
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "old", "--base-url", "https://old", "--key", "sk-old")
+    run(_isolate_home, "use", "old", "--no-verify")
+    run(_isolate_home, "set", "new", "--base-url", "https://new", "--key", "sk-new")
+
+    settings_file.unlink()
+    settings_file.mkdir()
+    result = run(_isolate_home, "use", "new", "--no-verify", check=False)
+
+    assert result.returncode != 0
+    assert "settings path exists but is not a regular file" in result.stderr
+    assert "switched -> new" not in result.stdout
+    assert (_isolate_home / ".config/ccs/active").read_text().strip() == "old"

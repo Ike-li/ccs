@@ -64,6 +64,11 @@ jobs:
       - name: Shellcheck
         run: shellcheck -s sh bin/ccs install.sh
 
+      - name: Tracked docs safety
+        run: |
+          unsafe='--danger'"ously-skip-permissions"
+          ! git grep -n -- "$unsafe" README.md docs CONTRIBUTING.md SECURITY.md CHANGELOG.md
+
       - name: Ruff check
         run: ruff check tests
 

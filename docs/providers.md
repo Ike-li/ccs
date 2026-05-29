@@ -7,7 +7,7 @@ These recipes are starting points for Anthropic-compatible Claude Code endpoints
 References:
 
 - [Claude Code settings](https://docs.anthropic.com/en/docs/claude-code/settings)
-- [DeepSeek Claude Code integration](https://api-docs.deepseek.com/guides/agent_integrations/claude_code)
+- [DeepSeek Claude Code integration](https://api-docs.deepseek.com/guides/coding_agents)
 - [OpenRouter Claude Code integration](https://openrouter.ai/docs/cookbook/coding-agents/claude-code-integration)
 - [Kimi Code in third-party coding agents](https://www.kimi.com/code/docs/en/third-party-tools/other-coding-agents.html)
 - [Hugging Face Claude Code integration](https://huggingface.co/docs/inference-providers/integrations/claude-code)
@@ -41,10 +41,13 @@ Equivalent explicit setup:
 ccs set deepseek \
   --base-url https://api.deepseek.com/anthropic \
   --key sk-... \
+  --use-auth-token \
   --model 'deepseek-v4-pro[1m]' \
   --opus-model 'deepseek-v4-pro[1m]' \
   --sonnet-model 'deepseek-v4-pro[1m]' \
-  --haiku-model deepseek-v4-flash
+  --haiku-model deepseek-v4-flash \
+  -e CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash \
+  -e CLAUDE_CODE_EFFORT_LEVEL=max
 ccs use deepseek
 ```
 
@@ -75,7 +78,8 @@ ccs set openrouter \
   --use-auth-token \
   --opus-model '~anthropic/claude-opus-latest' \
   --sonnet-model '~anthropic/claude-sonnet-latest' \
-  --haiku-model '~anthropic/claude-haiku-latest'
+  --haiku-model '~anthropic/claude-haiku-latest' \
+  -e CLAUDE_CODE_SUBAGENT_MODEL='~anthropic/claude-opus-latest'
 ccs use openrouter
 ```
 
@@ -106,7 +110,8 @@ ccs set hf \
   --use-auth-token \
   --opus-model zai-org/GLM-5.1 \
   --sonnet-model zai-org/GLM-5.1 \
-  --haiku-model zai-org/GLM-5.1
+  --haiku-model zai-org/GLM-5.1 \
+  -e CLAUDE_CODE_SUBAGENT_MODEL=zai-org/GLM-5.1
 ccs use hf
 ```
 
