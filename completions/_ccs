@@ -35,6 +35,7 @@ _ccs() {
         '--version:Show version'
     )
 
+    # Keep in sync with PROVIDER_ENV_KEYS in bin/ccs.
     local -a managed_envs
     managed_envs=(
         ANTHROPIC_MODEL

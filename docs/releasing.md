@@ -5,7 +5,7 @@ This project is a single POSIX shell script plus completions and docs. Releases 
 ## Version checklist
 
 1. Update `CCS_VERSION` in `bin/ccs`.
-2. Update README examples that mention the new tag.
+2. Update README examples and the `install.sh` default `ref` / `expected_sha256` for the new tag.
 3. Run:
 
 ```bash
@@ -14,7 +14,7 @@ shellcheck -s sh bin/ccs install.sh
 uv run --no-project --with pytest pytest tests/test_cli.py
 ruff check tests
 ruff format --check tests
-test "$(./bin/ccs --version)" = "ccs 0.6.1"
+test "$(./bin/ccs --version)" = "ccs 0.7.0"
 ```
 
 4. Confirm tracked docs do not contain unsafe permission-bypass examples:
@@ -27,28 +27,31 @@ unsafe='--danger'"ously-skip-permissions"
 5. Create and push a signed or annotated tag:
 
 ```bash
-git tag -a v0.6.1 -m "ccs v0.6.1"
-git push origin main v0.6.1
+git tag -a v0.7.0 -m "ccs v0.7.0"
+git push origin main v0.7.0
 ```
 
 The release workflow reruns syntax checks, ShellCheck, pytest, and tracked-doc safety validation before it creates the archive from git-tracked project files:
 
 - `ccs-vX.Y.Z.tar.gz`
 - `ccs-vX.Y.Z.sha256`
+- `bin-ccs-vX.Y.Z.sha256`
 - GitHub release notes generated from commits
 
 ## Install script
 
-The README one-liner installs from `main` by default:
+The README one-liner downloads `install.sh` from `main`, but the script itself installs a pinned release tag and verifies the downloaded `bin/ccs` sha256:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Ike-li/ccs/main/install.sh | sh
 ```
 
-Users can pin a tag:
+Users can override the ref only when they also provide the matching checksum:
 
 ```bash
-CCS_INSTALL_REF=v0.6.1 sh -c "$(curl -fsSL https://raw.githubusercontent.com/Ike-li/ccs/main/install.sh)"
+CCS_INSTALL_REF=v0.7.0 \
+CCS_INSTALL_SHA256=<sha256 from bin-ccs-v0.7.0.sha256> \
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/Ike-li/ccs/main/install.sh)"
 ```
 
 ## Homebrew tap
@@ -61,8 +64,8 @@ Example formula:
 class Ccs < Formula
   desc "Tiny Claude Code provider switcher"
   homepage "https://github.com/Ike-li/ccs"
-  url "https://github.com/Ike-li/ccs/releases/download/v0.6.1/ccs-v0.6.1.tar.gz"
-  sha256 "<sha256 from ccs-v0.6.1.sha256>"
+  url "https://github.com/Ike-li/ccs/releases/download/v0.7.0/ccs-v0.7.0.tar.gz"
+  sha256 "<sha256 from ccs-v0.7.0.sha256>"
   license "GPL-3.0-only"
 
   def install

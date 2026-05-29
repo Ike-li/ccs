@@ -28,6 +28,7 @@ Do not use `ccs` as the main tool when:
 | `.env` / direnv / secret helpers | Per-project env management | Works well with existing shell workflows | Does not understand Claude Code provider semantics or model aliases |
 | Local proxy / router | Protocol translation and routing | Can bridge non-Anthropic APIs, add fallback, logging, and policy | Requires a running process, local port, more moving parts, and extra security review |
 | Full gateway such as LiteLLM | Team-scale model access | Centralizes models, auth, budgets, routing | Solves a different layer; users still need a clean Claude Code client setup |
+| GUI switcher such as [`cc-switch`](https://github.com/farion1231/cc-switch) | Users who prefer a desktop UI | Visual provider switching and GUI affordances | Electron/GUI footprint; `ccs` stays CLI-first, scriptable, and zero-runtime beyond POSIX shell |
 | `ccs` | Client-side provider switching | Small POSIX shell CLI, Homebrew install, recipes, `doctor`, official settings path | Plaintext settings by design; no protocol translation; scoped to Claude Code env settings |
 
 ## Where `ccs` is stronger

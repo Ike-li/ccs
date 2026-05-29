@@ -47,13 +47,14 @@ jobs:
           install -m 755 install.sh "$pkg/install.sh"
           cp completions/ccs.bash "$pkg/completions/ccs.bash"
           cp completions/_ccs "$pkg/completions/_ccs"
-          cp README.md LICENSE CHANGELOG.md CONTRIBUTING.md SECURITY.md "$pkg/"
+          cp README.md README.zh.md LICENSE CHANGELOG.md CONTRIBUTING.md SECURITY.md "$pkg/"
           git ls-files docs | while IFS= read -r path; do
             mkdir -p "$pkg/$(dirname "$path")"
             cp "$path" "$pkg/$path"
           done
           tar -C "$pkg" -czf "dist/ccs-${tag}.tar.gz" .
           (cd dist && sha256sum "ccs-${tag}.tar.gz" >"ccs-${tag}.sha256")
+          sha256sum bin/ccs | awk '{print $1}' >"dist/bin-ccs-${tag}.sha256"
 
       - name: Create or update GitHub release
         env:
@@ -62,9 +63,9 @@ jobs:
           set -eu
           tag="${GITHUB_REF_NAME}"
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" "dist/ccs-${tag}.tar.gz" "dist/ccs-${tag}.sha256" --clobber
+            gh release upload "$tag" "dist/ccs-${tag}.tar.gz" "dist/ccs-${tag}.sha256" "dist/bin-ccs-${tag}.sha256" --clobber
           else
-            gh release create "$tag" "dist/ccs-${tag}.tar.gz" "dist/ccs-${tag}.sha256" \
+            gh release create "$tag" "dist/ccs-${tag}.tar.gz" "dist/ccs-${tag}.sha256" "dist/bin-ccs-${tag}.sha256" \
               --title "$tag" \
               --generate-notes \
               --verify-tag

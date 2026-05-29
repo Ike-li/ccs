@@ -12,13 +12,17 @@ Thumbs.db
 # Claude Code
 .claude/
 .omc/
+.omx/
 docs/claude-code-providers.md
 
 # Build artifacts
+.venv/
 *.egg-info/
 dist/
 build/
 __pycache__/
+.pytest_cache/
+.ruff_cache/
 
 # Runtime
 *.bak

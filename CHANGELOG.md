@@ -4,6 +4,32 @@ All notable changes to `ccs` are documented here.
 
 ## Unreleased
 
+## v0.7.0 - 2026-05-29
+
+### Added
+
+- Add `README.zh.md` and make the main README English-first with language switching.
+- Add release checksum assets for the standalone `bin/ccs` installer path.
+- Add regression coverage for verify HTTP status handling, plaintext HTTP warnings, checksum mismatch installs, JSON control characters, and non-string settings env values.
+
+### Changed
+
+- Prefer `jq` for settings rewrites when available so nested top-level settings remain readable; keep the POSIX awk writer as a fallback.
+- Document the settings rewrite contract, plaintext secret boundary, and fallback installer checksum behavior.
+- Keep provider env write order sourced from the single `PROVIDER_ENV_KEYS` list.
+- Compare `ccs` with GUI switchers such as `cc-switch`.
+
+### Fixed
+
+- Escape JSON control characters in provider env values before writing `settings.json`.
+- Preserve non-string, object, and array values from non-managed settings env entries during provider switches.
+- Move verify auth headers out of the curl argv into a private curl config file.
+- Cover verify success, auth failure, access denial, provider rejection, reachable 4xx, 5xx, and unexpected status branches.
+- Warn before sending provider secrets to non-loopback plaintext HTTP endpoints.
+- Create sensitive files under `umask 077` and warn if strict chmod cannot be applied.
+- Pin the fallback installer to a release tag and verify the downloaded `bin/ccs` checksum before installation.
+- Explicitly ignore local cache and automation directories in the repository ignore list.
+
 ## v0.6.1 - 2026-05-29
 
 ### Added

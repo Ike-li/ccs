@@ -3,14 +3,18 @@
 import json
 import os
 import pty
+import re
 import select
 import stat
 import subprocess
 import time
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 CCS = ROOT / "bin" / "ccs"
+INSTALL = ROOT / "install.sh"
 
 
 def run(
@@ -47,6 +51,54 @@ def provider_conf(home: Path, name: str) -> dict[str, str]:
     return data
 
 
+def provider_env_keys() -> list[str]:
+    script = CCS.read_text()
+    match = re.search(r'^PROVIDER_ENV_KEYS="([^"]+)"$', script, re.MULTILINE)
+    assert match is not None
+    return match.group(1).split()
+
+
+def write_fake_curl(fake_bin: Path, log_file: Path) -> None:
+    fake_bin.mkdir(exist_ok=True)
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        """#!/bin/sh
+out=
+config=
+while [ "$#" -gt 0 ]; do
+    printf 'ARG:%s\\n' "$1" >> "$CCS_FAKE_CURL_LOG"
+    case "$1" in
+        -o)
+            out=$2
+            printf 'ARG:%s\\n' "$2" >> "$CCS_FAKE_CURL_LOG"
+            shift 2
+            ;;
+        --config)
+            config=$2
+            printf 'ARG:%s\\n' "$2" >> "$CCS_FAKE_CURL_LOG"
+            shift 2
+            ;;
+        --data)
+            printf 'DATA:%s\\n' "$2" >> "$CCS_FAKE_CURL_LOG"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+if [ -n "$config" ]; then
+    while IFS= read -r line; do
+        printf 'CONFIG:%s\\n' "$line" >> "$CCS_FAKE_CURL_LOG"
+    done < "$config"
+fi
+[ -n "$out" ] && printf '%s' "${CCS_FAKE_CURL_BODY:-{\\"ok\\":true}}" > "$out"
+printf '%s' "${CCS_FAKE_CURL_STATUS:-200}"
+"""
+    )
+    fake_curl.chmod(0o755)
+
+
 def read_pty_until(master_fd: int, text: str, timeout: float = 5) -> str:
     needle = text.encode()
     data = b""
@@ -76,7 +128,7 @@ def test_script_is_executable_and_has_valid_shell_syntax(_isolate_home):
 def test_version_matches_release_prep(_isolate_home):
     result = run(_isolate_home, "--version")
 
-    assert result.stdout.strip() == "ccs 0.6.1"
+    assert result.stdout.strip() == "ccs 0.7.0"
 
 
 def test_init_creates_config_layout(_isolate_home):
@@ -280,14 +332,110 @@ def test_settings_json_preserves_unrelated_env_json_escapes(_isolate_home):
     run(_isolate_home, "set", "k", "--base-url", "https://k.example", "--key", "sk-X")
     run(_isolate_home, "use", "k", "--no-verify")
 
-    raw = settings_file.read_text()
-    data = json.loads(raw)
-    assert '"CUSTOM_UNICODE": "x\\u0026y"' in raw
-    assert '"CUSTOM_NEWLINE": "a\\nb"' in raw
-    assert '"CUSTOM_TAB": "a\\tb"' in raw
+    data = json.loads(settings_file.read_text())
     assert data["env"]["CUSTOM_UNICODE"] == "x&y"
     assert data["env"]["CUSTOM_NEWLINE"] == "a\nb"
     assert data["env"]["CUSTOM_TAB"] == "a\tb"
+    assert data["env"]["ANTHROPIC_API_KEY"] == "sk-X"
+
+
+def test_use_escapes_control_chars_in_env_value(_isolate_home):
+    run(_isolate_home, "init")
+    value = "a\x08b\x0cc"
+    run(
+        _isolate_home,
+        "set",
+        "k",
+        "--base-url",
+        "https://k.example",
+        "--key",
+        "sk-X",
+        "-e",
+        f"ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION={value}",
+    )
+    run(_isolate_home, "use", "k", "--no-verify")
+
+    raw = (_isolate_home / ".claude/settings.json").read_text()
+    data = json.loads(raw)
+    assert data["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION"] == value
+    assert "\x08" not in raw
+    assert "\x0c" not in raw
+
+
+def test_use_preserves_non_string_env_values(_isolate_home):
+    settings_file = _isolate_home / ".claude/settings.json"
+    settings_file.parent.mkdir(parents=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "env": {
+                    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": 8192,
+                    "SOME_FLAG": True,
+                    "ANTHROPIC_API_KEY": "old",
+                }
+            }
+        )
+    )
+
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "k", "--base-url", "https://k.example", "--key", "sk-X")
+    run(_isolate_home, "use", "k", "--no-verify")
+
+    data = settings(_isolate_home)
+    assert data["env"]["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == 8192
+    assert data["env"]["SOME_FLAG"] is True
+    assert data["env"]["ANTHROPIC_API_KEY"] == "sk-X"
+
+
+def test_use_preserves_multiline_object_env_values(_isolate_home):
+    settings_file = _isolate_home / ".claude/settings.json"
+    settings_file.parent.mkdir(parents=True)
+    settings_file.write_text(
+        """{
+  "env": {
+    "CUSTOM_OBJECT": {
+      "limit": 8192,
+      "enabled": true,
+      "label": "héllo-世界"
+    },
+    "CUSTOM_ARRAY": [
+      "alpha",
+      "beta"
+    ],
+    "ANTHROPIC_API_KEY": "old"
+  }
+}
+"""
+    )
+
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "k", "--base-url", "https://k.example", "--key", "sk-X")
+    run(_isolate_home, "use", "k", "--no-verify")
+
+    data = settings(_isolate_home)
+    assert data["env"]["CUSTOM_OBJECT"] == {"limit": 8192, "enabled": True, "label": "héllo-世界"}
+    assert data["env"]["CUSTOM_ARRAY"] == ["alpha", "beta"]
+    assert data["env"]["ANTHROPIC_API_KEY"] == "sk-X"
+
+
+def test_use_preserves_nested_other_fields(_isolate_home):
+    settings_file = _isolate_home / ".claude/settings.json"
+    settings_file.parent.mkdir(parents=True)
+    original = {
+        "permissions": {"allow": ["Bash(*)"], "deny": [{"tool": "Read", "path": "héllo-世界"}]},
+        "hooks": {"PostToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "echo héllo-世界"}]}]},
+        "env": {"CUSTOM_VAR": "x", "ANTHROPIC_API_KEY": "old"},
+    }
+    settings_file.write_text(json.dumps(original, ensure_ascii=False, indent=2))
+
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "k", "--base-url", "https://k.example", "--key", "sk-X")
+    run(_isolate_home, "use", "k", "--no-verify")
+
+    data = settings(_isolate_home)
+    assert data["permissions"] == original["permissions"]
+    assert data["hooks"] == original["hooks"]
+    assert data["env"]["CUSTOM_VAR"] == "x"
     assert data["env"]["ANTHROPIC_API_KEY"] == "sk-X"
 
 
@@ -580,26 +728,8 @@ def test_verify_rejects_bad_scheme(_isolate_home):
 
 def test_verify_uses_auth_specific_curl_header(_isolate_home, tmp_path):
     fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
     log_file = tmp_path / "curl.log"
-    fake_curl = fake_bin / "curl"
-    fake_curl.write_text(
-        """#!/bin/sh
-out=
-while [ "$#" -gt 0 ]; do
-    if [ "$1" = "-o" ]; then
-        out=$2
-        shift 2
-        continue
-    fi
-    printf '%s\\n' "$1" >> "$CCS_FAKE_CURL_LOG"
-    shift
-done
-[ -n "$out" ] && printf '{"ok":true}' > "$out"
-printf 200
-"""
-    )
-    fake_curl.chmod(0o755)
+    write_fake_curl(fake_bin, log_file)
     env_extra = {
         "PATH": f"{fake_bin}:{os.environ['PATH']}",
         "CCS_FAKE_CURL_LOG": str(log_file),
@@ -613,15 +743,16 @@ printf 200
         "--base-url",
         "https://api.example",
         "--key",
-        "sk-api",
+        'sk-"api\\key',
         "--opus-model",
         "model-opus",
         env_extra=env_extra,
     )
     run(_isolate_home, "verify", "api", env_extra=env_extra)
     api_args = log_file.read_text()
-    assert "x-api-key: sk-api" in api_args
-    assert "Authorization: Bearer" not in api_args
+    assert 'sk-"api\\key' not in "\n".join(line for line in api_args.splitlines() if line.startswith("ARG:"))
+    assert 'CONFIG:header = "x-api-key: sk-\\"api\\\\key"' in api_args
+    assert "CONFIG:header = \"Authorization: Bearer" not in api_args
     assert '"model":"model-opus"' in api_args
 
     log_file.write_text("")
@@ -638,8 +769,74 @@ printf 200
     )
     run(_isolate_home, "verify", "token", env_extra=env_extra)
     token_args = log_file.read_text()
-    assert "Authorization: Bearer sk-token" in token_args
-    assert "x-api-key:" not in token_args
+    assert "sk-token" not in "\n".join(line for line in token_args.splitlines() if line.startswith("ARG:"))
+    assert 'CONFIG:header = "Authorization: Bearer sk-token"' in token_args
+    assert "CONFIG:header = \"x-api-key:" not in token_args
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "expected_returncode", "expected_text"),
+    [
+        ("200", '{"ok":true}', 0, "OK (200)"),
+        ("401", '{"error":{"message":"bad key"}}', 1, "Authentication failed (401)"),
+        ("403", '{"error":{"message":"denied"}}', 1, "Access denied (403)"),
+        ("400", '{"error":{"type":"invalid_api_key","message":"bad key"}}', 1, "Provider rejected: bad key"),
+        ("400", '{"error":{"type":"overloaded_error","message":"try later"}}', 0, "Reachable (HTTP 400)"),
+        ("500", '{"error":{"message":"server"}}', 1, "Server error (HTTP 500)"),
+        ("000", "", 1, "unexpected HTTP status 000"),
+    ],
+)
+def test_verify_status_branches(_isolate_home, tmp_path, status, body, expected_returncode, expected_text):
+    fake_bin = tmp_path / "bin"
+    log_file = tmp_path / "curl.log"
+    write_fake_curl(fake_bin, log_file)
+    env_extra = {
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "CCS_FAKE_CURL_LOG": str(log_file),
+        "CCS_FAKE_CURL_STATUS": status,
+        "CCS_FAKE_CURL_BODY": body,
+    }
+
+    run(_isolate_home, "init", env_extra=env_extra)
+    run(_isolate_home, "set", "api", "--base-url", "https://api.example", "--key", "sk-api", env_extra=env_extra)
+    result = run(_isolate_home, "verify", "api", check=False, env_extra=env_extra)
+
+    assert result.returncode == expected_returncode
+    assert expected_text in result.stdout
+
+
+def test_verify_warns_on_plain_http(_isolate_home, tmp_path):
+    fake_bin = tmp_path / "bin"
+    log_file = tmp_path / "curl.log"
+    write_fake_curl(fake_bin, log_file)
+    env_extra = {
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "CCS_FAKE_CURL_LOG": str(log_file),
+    }
+
+    run(_isolate_home, "init", env_extra=env_extra)
+    run(_isolate_home, "set", "api", "--base-url", "http://api.example", "--key", "sk-api", env_extra=env_extra)
+    result = run(_isolate_home, "verify", "api", env_extra=env_extra)
+
+    assert "verifying against http://api.example/v1/messages" in result.stderr
+    assert "warning: sending provider secret over plain HTTP" in result.stderr
+
+
+def test_verify_warns_on_non_loopback_127_like_hostname(_isolate_home, tmp_path):
+    fake_bin = tmp_path / "bin"
+    log_file = tmp_path / "curl.log"
+    write_fake_curl(fake_bin, log_file)
+    env_extra = {
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "CCS_FAKE_CURL_LOG": str(log_file),
+    }
+
+    run(_isolate_home, "init", env_extra=env_extra)
+    run(_isolate_home, "set", "api", "--base-url", "http://127.evil.example", "--key", "sk-api", env_extra=env_extra)
+    result = run(_isolate_home, "verify", "api", env_extra=env_extra)
+
+    assert "verifying against http://127.evil.example/v1/messages" in result.stderr
+    assert "warning: sending provider secret over plain HTTP" in result.stderr
 
 
 def test_set_rejects_invalid_provider_name(_isolate_home):
@@ -788,6 +985,30 @@ def test_model_with_special_chars_encoded_correctly(_isolate_home):
     assert 'ANTHROPIC_MODEL=model"with\\quotes' in raw
 
 
+def test_provider_file_orders_env_keys_like_provider_env_keys(_isolate_home):
+    keys = provider_env_keys()
+    args = ["set", "ordered", "--base-url", "https://ordered.example", "--key", "sk-ordered"]
+    for key in keys:
+        if key == "ANTHROPIC_BASE_URL":
+            continue
+        args.extend(["-e", f"{key}=value-for-{key}"])
+
+    run(_isolate_home, "init")
+    run(_isolate_home, *args)
+
+    lines = (_isolate_home / ".config/ccs/providers/ordered.conf").read_text().splitlines()
+    env_keys = [line.split("=", 1)[0] for line in lines[2:]]
+    assert env_keys == keys
+
+
+def test_provider_file_has_strict_perms(_isolate_home):
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "k", "--base-url", "https://k.example", "--key", "sk-X")
+
+    mode = (_isolate_home / ".config/ccs/providers/k.conf").stat().st_mode
+    assert mode & 0o077 == 0
+
+
 def test_use_with_corrupt_settings_json(_isolate_home):
     settings_file = _isolate_home / ".claude/settings.json"
     settings_file.parent.mkdir(parents=True)
@@ -836,3 +1057,42 @@ def test_rm_active_fails_when_settings_path_is_not_file_and_keeps_state(_isolate
     assert "removed k" not in result.stdout
     assert (_isolate_home / ".config/ccs/active").read_text().strip() == "k"
     assert (_isolate_home / ".config/ccs/providers/k.conf").exists()
+
+
+def test_install_sh_fails_on_sha256_mismatch(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        """#!/bin/sh
+out=
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = "-o" ]; then
+        out=$2
+        shift 2
+        continue
+    fi
+    shift
+done
+[ -n "$out" ] && printf 'not the real ccs' > "$out"
+"""
+    )
+    fake_curl.chmod(0o755)
+    install_dir = tmp_path / "install"
+
+    result = subprocess.run(
+        ["sh", str(INSTALL)],
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "CCS_INSTALL_DIR": str(install_dir),
+            "CCS_INSTALL_SHA256": "0000000000000000000000000000000000000000000000000000000000000000",
+        },
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "checksum mismatch" in result.stderr
+    assert not (install_dir / "ccs").exists()

@@ -1,36 +1,38 @@
 # ccs: Claude Code provider switcher
 
+English | [简体中文](README.zh.md)
+
 [![CI](https://github.com/Ike-li/ccs/actions/workflows/test.yml/badge.svg)](https://github.com/Ike-li/ccs/actions/workflows/test.yml)
 [![Release](https://img.shields.io/github/v/release/Ike-li/ccs?sort=semver)](https://github.com/Ike-li/ccs/releases)
-[![Homebrew](https://img.shields.io/badge/install-Homebrew-fbb040.svg)](#安装)
+[![Homebrew](https://img.shields.io/badge/install-Homebrew-fbb040.svg)](#install)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Shell](https://img.shields.io/badge/runtime-POSIX%20sh-2f7d32.svg)](bin/ccs)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-provider%20switcher-6b5cff.svg)](docs/compare.md)
 
 Switch Claude Code between Anthropic-compatible providers in seconds. No proxy. No daemon. No Node runtime.
 
-`ccs` 是一个极小的 Claude Code provider switcher。它管理多个 Anthropic-compatible endpoints，并把当前 provider 的 `ANTHROPIC_BASE_URL` 和对应 secret 写进 Claude Code 官方支持的 `~/.claude/settings.json`：
+`ccs` manages multiple Anthropic-compatible endpoints and writes the active provider into Claude Code's supported `~/.claude/settings.json` env block:
 
-- API key provider 写 `ANTHROPIC_API_KEY`
-- Bearer token provider 写 `ANTHROPIC_AUTH_TOKEN`
+- API key providers use `ANTHROPIC_API_KEY`
+- Bearer token providers use `ANTHROPIC_AUTH_TOKEN`
 
-适合：Anthropic-compatible endpoint、LiteLLM/企业网关、OpenRouter、DeepSeek、Kimi 等已经能直接接 Claude Code 的场景。不适合：把 OpenAI/Gemini/Ollama 协议转换成 Anthropic Messages API；那是 router/gateway 的工作。
+It is useful for Anthropic-compatible endpoints, LiteLLM or internal gateways, OpenRouter, DeepSeek, Kimi, Hugging Face, and similar providers that already speak Claude Code's Anthropic Messages API shape. It is not a protocol translator for OpenAI, Gemini, Ollama, or custom chat APIs.
 
 <sub>Search terms: Claude Code provider switcher, Anthropic-compatible endpoint manager, OpenRouter / DeepSeek / Kimi / LiteLLM setup helper, API key and auth token conflict doctor.</sub>
 
-## 30 秒判断
+## Quick Decision
 
-| 如果你正在... | `ccs` 帮你... |
+| If you are... | `ccs` helps by... |
 |---|---|
-| 在多个 Claude Code provider 之间切换 | 用 `ccs use <name>` 改 active provider，不反复手改 JSON |
-| 配 DeepSeek、OpenRouter、Kimi 或企业网关 | 用 preset / recipe 固化 base URL、auth mode 和模型 alias |
-| 遇到 API key 和 auth token 冲突 | 用 `ccs doctor` 找出 settings 和当前 shell 的冲突来源 |
-| 想避免本地代理和额外运行时 | 只用 POSIX `sh` 写官方 `settings.json`，不启动 daemon |
-| 想给团队复用配置路径 | 用可复制命令、Homebrew 安装和明确定义的 provider 文件布局 |
+| Switching between Claude Code providers | Running `ccs use <name>` instead of hand-editing JSON |
+| Setting up DeepSeek, OpenRouter, Kimi, or a gateway | Capturing base URL, auth mode, and model aliases in a reusable provider file |
+| Debugging API key vs auth token conflicts | Running `ccs doctor` to find stale settings or shell env state |
+| Avoiding local proxies and extra runtimes | Writing official Claude Code settings with POSIX `sh` only |
+| Sharing setup steps with a team | Keeping provider layout and commands copyable and reviewable |
 
-## 60 秒上手
+## 60-Second Start
 
-推荐通过 Homebrew 安装：
+Homebrew is the recommended install path:
 
 ```bash
 brew install Ike-li/tap/ccs
@@ -41,113 +43,108 @@ ccs use deepseek
 
 ![ccs terminal demo](docs/demo.gif)
 
-切换后重启 Claude Code 会话，让新 settings 生效。
+Restart the Claude Code session after switching so the new settings are loaded.
 
-不用 Homebrew 时，也可以用安装脚本：
-
-```bash
-CCS_INSTALL_REF=v0.6.1 sh -c "$(curl -fsSL https://raw.githubusercontent.com/Ike-li/ccs/main/install.sh)"
-```
-
-## 使用场景
-
-- 在 Anthropic、DeepSeek、OpenRouter、Kimi、Hugging Face 或企业 Anthropic-compatible gateway 之间切换。
-- 给 LiteLLM / 内部网关用户提供一个不改变上游架构的 Claude Code 配置入口。
-- 把 provider recipe 写进 README、runbook 或 onboarding 文档，让新成员少踩 auth mode 和 model alias 的坑。
-- 用 `ccs doctor` 检查 Claude Code 是否能读到当前 settings、是否有 secret 冲突、active provider 是否完整。
-- 在不引入 Node/Python runtime、不运行本地 proxy 的前提下，保持配置可审计、可复制、可删除。
-
-## 和其他方式比
-
-| 方式 | 适合 | 主要代价 | `ccs` 的定位 |
-|---|---|---|---|
-| 手改 `~/.claude/settings.json` | 一次性实验 | 容易写错 env、残留旧 key、难复现 | 把切换动作变成命令和 provider 文件 |
-| `export ANTHROPIC_*` 脚本 | 临时 shell 会话 | 容易和 settings 互相冲突，换终端就丢 | 写入 Claude Code 官方 settings，并提示 shell cleanup |
-| 本地 proxy / router | 协议转换、多模型路由 | 需要常驻进程、端口、更多配置 | 不代理请求，只切换已兼容 Claude Code 的 endpoint |
-| 密钥管理器 / `.env` 工具 | 加密和团队密钥治理 | 不负责 Claude Code provider 语义 | 保持轻量；明文边界写清楚，必要时可和密钥流程搭配 |
-
-更完整的取舍见 [docs/compare.md](docs/compare.md)。
-
-## 功能
-
-- `ccs set` 逐项填写 provider：name、base URL、secret env、key、默认模型、`/model` alias 和 Claude Code 子 agent env
-- `ccs set <name> ...` 支持脚本式创建或更新
-- `ccs preset <deepseek|openrouter>` 用内置 recipe 快速创建常见 provider
-- `ccs use <name>` 写入 Claude Code 的 `settings.json`
-- API key / auth token 二选一，切换时自动清理另一种 secret env
-- provider 配置保存在 `~/.config/ccs/providers/<name>.conf`
-- `ccs ls` / `ccs current` / `ccs show` 查看配置
-- `ccs verify [name]` 发送一次 Anthropic messages 探测请求
-- `ccs doctor` 检查本机 Claude Code / settings / provider / shell secret 状态
-
-## 安装
-
-推荐通过 Homebrew 安装：
-
-```bash
-brew install Ike-li/tap/ccs
-```
-
-不用 Homebrew 时，可以一行安装到 `~/.local/bin`：
+If Homebrew is unavailable, the install script is the fallback path. It defaults to a pinned release tag and verifies the downloaded `bin/ccs` sha256. If you override `CCS_INSTALL_REF`, also override `CCS_INSTALL_SHA256`.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Ike-li/ccs/main/install.sh | sh
 ```
 
-确保 `~/.local/bin` 在 `PATH` 里：
+## Use Cases
+
+- Switch between Anthropic, DeepSeek, OpenRouter, Kimi, Hugging Face, LiteLLM, or an internal Anthropic-compatible gateway.
+- Give LiteLLM or gateway users a small Claude Code client setup layer without changing the upstream architecture.
+- Put provider recipes in a README, runbook, or onboarding guide.
+- Use `ccs doctor` to inspect settings readability, active provider completeness, and shell secret conflicts.
+- Keep provider switching auditable without introducing a background daemon or local port.
+
+## Comparison
+
+| Approach | Best for | Main cost | How `ccs` fits |
+|---|---|---|---|
+| Hand-edit `~/.claude/settings.json` | One-off experiments | Easy to leave stale env values or invalid JSON | Turns switching into a repeatable command |
+| `export ANTHROPIC_*` scripts | Temporary shell sessions | Conflicts with settings and disappears across terminals | Writes Claude Code's official settings path and prints cleanup hints |
+| Local proxy / router | Protocol translation and routing | Requires a running process, port, and more config | Does not proxy; switches endpoints that already work with Claude Code |
+| Secret managers / `.env` tools | Encrypted or team secret workflows | Does not model Claude Code provider semantics | Stays lightweight and can receive keys from those workflows |
+
+More tradeoffs are in [docs/compare.md](docs/compare.md).
+
+## Features
+
+- `ccs set` creates providers interactively or from flags.
+- `ccs preset <deepseek|openrouter>` creates common provider recipes.
+- `ccs use <name>` writes Claude Code's `settings.json`.
+- API key and bearer token modes are mutually exclusive; switching removes the stale managed secret env.
+- Provider config lives in `~/.config/ccs/providers/<name>.conf`.
+- `ccs ls`, `ccs current`, and `ccs show` inspect provider state.
+- `ccs verify [name]` sends one Anthropic Messages probe request.
+- `ccs doctor` checks local dependencies, settings, active provider, and shell env conflicts.
+
+## Install
+
+Recommended:
 
 ```bash
-ccs --help
+brew install Ike-li/tap/ccs
 ```
 
-本地仓库内安装：
+Fallback installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Ike-li/ccs/main/install.sh | sh
+```
+
+The fallback installer is less reviewable than Homebrew. It pins the default install to the latest supported release tag and checks sha256 before installing into `~/.local/bin`.
+
+Local repository install:
 
 ```bash
 mkdir -p ~/.local/bin
 install -m 755 bin/ccs ~/.local/bin/ccs
 ```
 
-也可以不安装，直接在仓库里运行：
+Or run without installing:
 
 ```bash
 ./bin/ccs --help
 ```
 
-发布和 Homebrew tap 维护见 [docs/releasing.md](docs/releasing.md)。
+Release and Homebrew tap maintenance are documented in [docs/releasing.md](docs/releasing.md).
 
-### Shell 补全（可选）
+### Shell Completion
 
-仓库 `completions/` 目录提供 bash 和 zsh 的补全脚本，可以 tab 补全子命令、provider name、`--*` 选项。
+Bash:
 
-bash：
 ```bash
-. /path/to/ccs/completions/ccs.bash   # 加进 ~/.bashrc
+. /path/to/ccs/completions/ccs.bash
 ```
 
-zsh：
+zsh:
+
 ```bash
 mkdir -p ~/.zsh/completions
 cp completions/_ccs ~/.zsh/completions/_ccs
-# 在 ~/.zshrc 加入：
+# Add to ~/.zshrc:
 #   fpath=(~/.zsh/completions $fpath)
 #   autoload -Uz compinit && compinit
 ```
 
-## 如何使用
+## Usage
 
-初始化配置目录：
+Initialize the config directory:
 
 ```bash
 ccs init
 ```
 
-交互式添加 provider：
+Create a provider interactively:
 
 ```bash
 ccs set deepseek
 ```
 
-它会逐项询问：
+TTY-capable terminals let you choose the secret env with left/right arrows:
 
 ```text
 Base URL:
@@ -159,53 +156,55 @@ Sonnet model (optional):
 Haiku model (optional):
 ```
 
-在支持 TTY 的终端里，`Secret env` 可以用左右方向键选择，当前项会显示为颜色块。大多数 provider 直接选 `ANTHROPIC_API_KEY`；需要 Bearer token 的 provider 选 `ANTHROPIC_AUTH_TOKEN`。key/token 只填一次。
+`Model` writes `ANTHROPIC_MODEL`. `Opus model`, `Sonnet model`, and `Haiku model` write the `/model` alias defaults. A single-model provider can use the same value for all aliases; multi-model providers can set each alias separately.
 
-`Model` 写入 `ANTHROPIC_MODEL`，控制 Claude Code 启动时的会话默认模型。`Opus model`、`Sonnet model`、`Haiku model` 写入 `/model` 里 `opus`、`sonnet`、`haiku` alias 的默认映射。单模型 provider 可以先填 `Model`，后面三个一路回车；支持多模型的 provider 可以分别填写。
-
-切换 provider：
+Switch providers:
 
 ```bash
 ccs use deepseek
 ```
 
-`ccs use` 默认会先调用 `ccs verify`。如果只是本地切换、不想发请求：
+`ccs use` verifies the provider by default. For local-only switching:
 
 ```bash
 ccs use deepseek --no-verify
 ```
 
-切换后重启 Claude Code 会话，让新 settings 生效。
-
-如果 Claude Code 提示 `Auth conflict: Both a token ... and an API key ... are set`，通常是当前 shell 里还 export 着另一种 secret，而不是 `settings.json` 写错。普通 `ccs use` 是子进程，不能直接 unset 父 shell；它会提示你需要执行的 cleanup，例如：
+If Claude Code reports `Auth conflict: Both a token ... and an API key ... are set`, the current shell usually still exports the opposite secret. `ccs use` prints a cleanup hint:
 
 ```bash
 unset ANTHROPIC_AUTH_TOKEN
 claude
 ```
 
-需要一次性清理所有 ccs 管理的 provider env 时，可以用 `eval "$(ccs use deepseek --shell)"`。`--shell` 会照常写入 `settings.json`，并把需要执行的 `unset ...` 输出到 stdout；普通切换日志会写到 stderr，方便 `eval` 安全执行。也可以直接开一个新终端再启动 Claude Code。
+For eval-safe cleanup output:
 
-## 常用命令
+```bash
+eval "$(ccs use deepseek --shell)"
+```
 
-| 命令 | 用途 |
+`--shell` still writes `settings.json`, prints cleanup commands to stdout, and sends ordinary status text to stderr.
+
+## Common Commands
+
+| Command | Purpose |
 |---|---|
-| `ccs init` | 创建 `~/.config/ccs` |
-| `ccs set [name]` | 交互式创建或更新 provider |
-| `ccs set <name> --base-url URL --key KEY` | 脚本式创建或更新 provider |
-| `ccs set <name> --use-auth-token` | 把 secret 写到 `ANTHROPIC_AUTH_TOKEN` |
-| `ccs preset deepseek --key KEY` | 用内置 DeepSeek recipe 创建 provider |
-| `ccs preset openrouter --key KEY` | 用内置 OpenRouter recipe 创建 provider |
-| `ccs use <name>` | 切换 active provider，默认先 verify |
-| `ccs use <name> --no-verify` | 跳过 verify 直接切换 |
-| `ccs verify [name]` | 单独验证 provider |
-| `ccs doctor` | 本地诊断 settings、active provider、依赖和 shell secret 冲突 |
-| `ccs ls` | 列出 providers |
-| `ccs current` | 显示 active provider |
-| `ccs show <name> [--show-key]` | 显示 provider，默认脱敏 key |
-| `ccs rm <name>` | 删除 provider；如果删的是 active，会清理 settings |
+| `ccs init` | Create `~/.config/ccs` |
+| `ccs set [name]` | Create or update a provider interactively |
+| `ccs set <name> --base-url URL --key KEY` | Create or update from flags |
+| `ccs set <name> --use-auth-token` | Store the secret as `ANTHROPIC_AUTH_TOKEN` |
+| `ccs preset deepseek --key KEY` | Create the DeepSeek recipe |
+| `ccs preset openrouter --key KEY` | Create the OpenRouter recipe |
+| `ccs use <name>` | Switch active provider and verify first |
+| `ccs use <name> --no-verify` | Switch without a network request |
+| `ccs verify [name]` | Verify a provider |
+| `ccs doctor` | Diagnose settings, active provider, dependencies, and shell conflicts |
+| `ccs ls` | List providers |
+| `ccs current` | Show active provider |
+| `ccs show <name> [--show-key]` | Show provider details; keys are masked by default |
+| `ccs rm <name>` | Remove a provider; active removal clears managed settings env |
 
-高级参数：
+Advanced model and env options:
 
 ```bash
 ccs set <name> --model claude-sonnet-4-6
@@ -219,11 +218,11 @@ ccs set <name> -e CLAUDE_CODE_EFFORT_LEVEL=max
 ccs set <name> --unset-env ANTHROPIC_DEFAULT_SONNET_MODEL
 ```
 
-`--unset-model` 只清理 `ANTHROPIC_MODEL`。如果要清理 Opus/Sonnet/Haiku alias、Claude Code subagent model 或 effort level，继续用 `--unset-env KEY`，这样高级模型元数据变量也保持同一套清理方式。
+`--unset-model` only removes `ANTHROPIC_MODEL`. Use `--unset-env KEY` for Opus/Sonnet/Haiku aliases, Claude Code subagent model, and effort level.
 
-## 脚本用法
+## Scripted Examples
 
-API key provider：
+API key provider:
 
 ```bash
 ccs set anthropic \
@@ -232,7 +231,7 @@ ccs set anthropic \
   --use-api-key
 ```
 
-Auth token provider：
+Auth token provider:
 
 ```bash
 ccs set openrouter \
@@ -245,23 +244,16 @@ ccs set openrouter \
   -e CLAUDE_CODE_SUBAGENT_MODEL='~anthropic/claude-opus-latest'
 ```
 
-DeepSeek 的 Claude Code 接入文档使用 `ANTHROPIC_AUTH_TOKEN` / Bearer auth。`ccs set` 遇到官方 Anthropic 兼容地址会默认选 auth token；如果已有旧配置写成了 API key 模式，可以这样切换：
+DeepSeek's Claude Code setup uses `ANTHROPIC_AUTH_TOKEN` / Bearer auth. If an older DeepSeek provider was created in API key mode:
 
 ```bash
 ccs set ds --use-auth-token
 ccs use ds
 ```
 
-更多 provider 配方见 [docs/providers.md](docs/providers.md)。
+More provider recipes are in [docs/providers.md](docs/providers.md).
 
-常见 provider 可以直接用 preset：
-
-```bash
-ccs preset deepseek --key sk-...
-ccs preset openrouter --key sk-or-v1-...
-```
-
-不想让 key 出现在 shell history，可以从 stdin 读取：
+Avoid shell history by reading the key from stdin:
 
 ```bash
 printf '%s\n' 'sk-or-v1-...' | ccs set openrouter \
@@ -270,7 +262,7 @@ printf '%s\n' 'sk-or-v1-...' | ccs set openrouter \
   --use-auth-token
 ```
 
-## 文件布局
+## File Layout
 
 ```text
 ~/.config/ccs/
@@ -281,17 +273,17 @@ printf '%s\n' 'sk-or-v1-...' | ccs set openrouter \
 ~/.claude/settings.json
   env:
     ANTHROPIC_BASE_URL:    ...
-    ANTHROPIC_API_KEY:     ...  # API key 模式
-    ANTHROPIC_AUTH_TOKEN:  ...  # auth token 模式
-    ANTHROPIC_MODEL:       ...  # 可选
-    ANTHROPIC_DEFAULT_OPUS_MODEL:    ...  # 可选，/model opus alias
-    ANTHROPIC_DEFAULT_SONNET_MODEL:  ...  # 可选，/model sonnet alias
-    ANTHROPIC_DEFAULT_HAIKU_MODEL:   ...  # 可选，/model haiku alias
-    CLAUDE_CODE_SUBAGENT_MODEL:      ...  # 可选，子 agent 模型
-    CLAUDE_CODE_EFFORT_LEVEL:        ...  # 可选，provider 建议的 effort level
+    ANTHROPIC_API_KEY:     ...  # API key mode
+    ANTHROPIC_AUTH_TOKEN:  ...  # auth token mode
+    ANTHROPIC_MODEL:       ...  # optional
+    ANTHROPIC_DEFAULT_OPUS_MODEL:    ...  # optional, /model opus alias
+    ANTHROPIC_DEFAULT_SONNET_MODEL:  ...  # optional, /model sonnet alias
+    ANTHROPIC_DEFAULT_HAIKU_MODEL:   ...  # optional, /model haiku alias
+    CLAUDE_CODE_SUBAGENT_MODEL:      ...  # optional, subagent model
+    CLAUDE_CODE_EFFORT_LEVEL:        ...  # optional, provider-recommended effort level
 ```
 
-provider 文件是简单的 `KEY=value`：
+Provider files are plain `KEY=value`:
 
 ```text
 auth=api_key
@@ -304,39 +296,41 @@ ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-haiku-4-5
 CLAUDE_CODE_SUBAGENT_MODEL=claude-haiku-4-5
 ```
 
-`ccs` 写入 settings 时会移除它管理的 provider env 和旧的 `apiKeyHelper`，再写入当前 provider；其他顶层字段和非 ccs 管理的 `env` 会保留。
+When writing settings, `ccs` removes managed provider env values and the legacy `apiKeyHelper`, writes the active provider, and preserves unrelated top-level fields plus non-managed `env` entries. If `jq` is available, settings are reserialized through `jq` for readable nested JSON. Without `jq`, the POSIX awk fallback keeps JSON semantics but minifies non-`env` top-level fields.
 
 ## Verify
 
-`ccs verify` 会向 `${ANTHROPIC_BASE_URL}/v1/messages` 发送一次 `max_tokens=1` 的探测请求，用来提前发现：
+`ccs verify` sends one `max_tokens=1` probe request to `${ANTHROPIC_BASE_URL}/v1/messages` to catch:
 
-- 401 / 403
-- 模型名错误
-- base URL 不通或超时
+- 401 / 403 auth failures
+- unsupported or misspelled model names
+- unreachable base URLs and timeouts
 
-`CCS_VERIFY_TIMEOUT` 可以调整超时秒数，默认 10 秒。
+`CCS_VERIFY_TIMEOUT` changes the timeout in seconds. The default is 10.
 
-探测模型优先使用 `ANTHROPIC_MODEL`，如果没配置，会依次使用 `ANTHROPIC_DEFAULT_OPUS_MODEL`、`ANTHROPIC_DEFAULT_SONNET_MODEL`、`ANTHROPIC_DEFAULT_HAIKU_MODEL`，最后才回退到内置 probe model。
+The probe model uses `ANTHROPIC_MODEL` first, then `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`, and finally the built-in probe model.
+
+`ccs verify` prints the target URL before sending. If a non-loopback `http://` base URL is used, it warns that the provider secret will cross plain HTTP.
 
 ## Doctor
 
-`ccs doctor` 做本地诊断，不会发网络请求：
+`ccs doctor` is local-only and does not send network requests. It checks:
 
-- `claude` / `curl` 是否在 `PATH`
-- `~/.config/ccs` 和 provider 数量
-- `~/.claude/settings.json` 是否可读写
-- active provider 是否存在、是否有 key 和 base URL
-- 当前 shell 是否 export 了另一种 secret
-- DeepSeek provider 是否仍在使用 API key 模式
+- `claude` and `curl` availability
+- `~/.config/ccs` and provider count
+- `~/.claude/settings.json` readability and writability
+- active provider presence, key, and base URL
+- current shell exports of the opposite secret env
+- DeepSeek providers still using API key mode
 
 ```bash
 ccs doctor
 ```
 
-正常配置后大致会看到：
+Example output:
 
 ```text
-ccs doctor 0.6.1
+ccs doctor 0.7.0
 ok:   config dir exists: ~/.config/ccs
 ok:   providers configured: 1
 ok:   claude command found
@@ -351,47 +345,48 @@ ok:   active provider secret env: ANTHROPIC_AUTH_TOKEN
 summary: 0 failure(s), 0 warning(s)
 ```
 
-## 故障排查
+## Troubleshooting
 
-| `ccs verify` 输出 | 含义 | 建议处理 |
+| `ccs verify` output | Meaning | Suggested fix |
 |---|---|---|
-| `Authentication failed (401)` | provider key 错或失效 | `ccs show <name> --show-key` 核对；用 `ccs set <name> --key NEW` 更新 |
-| `Access denied (403)` | key 有效但被拒绝（账号/权限/IP 限制） | 登录 provider 控制台检查 key 的 scope / 配额 / IP 白名单 |
-| `Provider rejected: <message>` | provider 主动拒绝（model 错、key 没权限、参数无效等） | 看 message 内容；如果是模型不存在，用 `ccs set <name> --model <provider 支持的模型>` 显式指定，或 `--opus-model` / `--sonnet-model` / `--haiku-model` 单独映射 |
-| `Connection failed: ...` | base URL 不通、DNS 解析失败、超时 | 用 `curl -v ${BASE_URL}/v1/messages` 验证可达；调整 `CCS_VERIFY_TIMEOUT` |
-| `unsupported scheme: file` | base URL 不是 http(s) | `ccs set <name> --base-url https://...` |
+| `Authentication failed (401)` | Provider key is wrong or expired | Check with `ccs show <name> --show-key`; update with `ccs set <name> --key NEW` |
+| `Access denied (403)` | Key is valid but denied | Check provider account scope, quota, or IP rules |
+| `Provider rejected: <message>` | Provider rejected the request | Read the message; for bad models, set `--model` or individual aliases |
+| `Connection failed: ...` | Base URL, DNS, or timeout problem | Test with `curl -v ${BASE_URL}/v1/messages`; adjust `CCS_VERIFY_TIMEOUT` |
+| `unsupported scheme: file` | Base URL is not HTTP(S) | Use `ccs set <name> --base-url https://...` |
 
-Claude Code 启动时如果报 `Auth conflict: Both a token ... and an API key ... are set`，看本文上半部分"切换 provider"段落，按提示 unset 当前 shell 里残留的 secret 变量。
+If Claude Code reports an API key/token conflict, see the provider switching section above and unset the stale secret from the current shell.
 
-## 安全语义
+## Security Model
 
-- `~/.config/ccs/providers/*.conf` 包含 provider 明文 key
-- `~/.claude/settings.json` 包含当前 active provider 的明文 key
-- 配置文件会尽量设置为 `0600`，配置目录为 `0700`
-- 如果 settings.json 会同步到云端或被备份，请按明文 secret 文件对待
+- `~/.config/ccs/providers/*.conf` contains plaintext provider keys.
+- `~/.claude/settings.json` contains the active provider key/token in plaintext.
+- `ccs` creates new sensitive files under `umask 077` and tries to set files to `0600` and config directories to `0700`.
+- If chmod fails on a filesystem that cannot enforce owner-only permissions, `ccs` warns on stderr.
+- Treat synced or backed-up `settings.json` as a plaintext secret file.
 
-## 项目维护
+## Maintenance
 
-- 版本变化见 [CHANGELOG.md](CHANGELOG.md)
-- 和手改 settings、shell export、本地 proxy 的对比见 [docs/compare.md](docs/compare.md)
-- 贡献说明见 [CONTRIBUTING.md](CONTRIBUTING.md)
-- 安全边界和漏洞报告见 [SECURITY.md](SECURITY.md)
-- 传播文案和 awesome-list pitch 见 [docs/outreach.md](docs/outreach.md)
+- Version history: [CHANGELOG.md](CHANGELOG.md)
+- Comparison with hand-editing settings, shell exports, proxies, and GUI switchers: [docs/compare.md](docs/compare.md)
+- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Security boundary and reporting: [SECURITY.md](SECURITY.md)
+- Outreach copy and awesome-list pitch: [docs/outreach.md](docs/outreach.md)
 
-## 完全卸载
+## Uninstall
 
 ```bash
 rm -f ~/.local/bin/ccs
 rm -rf ~/.config/ccs
-# 可选：清理 ~/.claude/settings.json 里的 ANTHROPIC_* env
+# Optional: remove managed ANTHROPIC_* env from ~/.claude/settings.json
 ```
 
-## 退出码
+## Exit Codes
 
-| 码 | 说明 |
+| Code | Meaning |
 |---|---|
-| 0 | 成功 |
-| 1 | 用户错误、verify 失败、输入无效 |
+| 0 | Success |
+| 1 | User error, verify failure, or invalid input |
 
 ## License
 

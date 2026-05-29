@@ -1,8 +1,9 @@
 #!/bin/sh
 
 set -u
+umask 077
 
-CCS_VERSION=0.6.1
+CCS_VERSION=0.7.0
 CCS_DIR=${CCS_DIR:-"$HOME/.config/ccs"}
 PROVIDERS_DIR=$CCS_DIR/providers
 ACTIVE_FILE=$CCS_DIR/active
@@ -34,6 +35,18 @@ die() {
     exit 1
 }
 
+warn() {
+    printf 'warning: %s\n' "$*" >&2
+}
+
+chmod_private_dir() {
+    chmod 700 "$1" 2>/dev/null || warn "could not set permissions 700 on $1"
+}
+
+chmod_private_file() {
+    chmod 600 "$1" 2>/dev/null || warn "could not set permissions 600 on $1"
+}
+
 usage() {
     cat <<'EOF'
 ccs - Claude Code provider switcher
@@ -51,6 +64,10 @@ Usage:
   ccs current
   ccs show <name> [--show-key]
   ccs rm <name>
+
+Note:
+  ccs use rewrites settings.json; jq keeps nested JSON readable when available,
+  otherwise the POSIX fallback minifies non-env top-level fields.
 EOF
 }
 
@@ -95,8 +112,8 @@ EOF
 
 ensure_dirs() {
     mkdir -p "$PROVIDERS_DIR" || die "cannot create $PROVIDERS_DIR"
-    chmod 700 "$CCS_DIR" 2>/dev/null || true
-    chmod 700 "$PROVIDERS_DIR" 2>/dev/null || true
+    chmod_private_dir "$CCS_DIR"
+    chmod_private_dir "$PROVIDERS_DIR"
 }
 
 provider_file() {
@@ -224,7 +241,7 @@ write_provider() {
     {
         printf 'auth=%s\n' "$auth"
         printf 'key=%s\n' "$key"
-        awk '
+        awk -v keys="$PROVIDER_ENV_KEYS" '
             {
                 pos = index($0, "=")
                 if (pos == 0) next
@@ -233,34 +250,15 @@ write_provider() {
                 values[key] = value
             }
             END {
-                order[1] = "ANTHROPIC_BASE_URL"
-                order[2] = "ANTHROPIC_MODEL"
-                order[3] = "ANTHROPIC_DEFAULT_OPUS_MODEL"
-                order[4] = "ANTHROPIC_DEFAULT_SONNET_MODEL"
-                order[5] = "ANTHROPIC_DEFAULT_HAIKU_MODEL"
-                order[6] = "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"
-                order[7] = "ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION"
-                order[8] = "ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES"
-                order[9] = "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"
-                order[10] = "ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION"
-                order[11] = "ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES"
-                order[12] = "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"
-                order[13] = "ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION"
-                order[14] = "ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES"
-                order[15] = "ANTHROPIC_CUSTOM_MODEL_OPTION"
-                order[16] = "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME"
-                order[17] = "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION"
-                order[18] = "ANTHROPIC_CUSTOM_MODEL_OPTION_SUPPORTED_CAPABILITIES"
-                order[19] = "CLAUDE_CODE_SUBAGENT_MODEL"
-                order[20] = "CLAUDE_CODE_EFFORT_LEVEL"
-                for (i = 1; i <= 20; i++) {
+                count = split(keys, order, " ")
+                for (i = 1; i <= count; i++) {
                     key = order[i]
                     if (key in values) print key "=" values[key]
                 }
             }
         ' "$env_file"
     } >"$tmp"
-    chmod 600 "$tmp" 2>/dev/null || true
+    chmod_private_file "$tmp"
     mv "$tmp" "$file" || {
         rm -f "$tmp"
         die "cannot write provider file $file"
@@ -268,6 +266,29 @@ write_provider() {
 }
 
 json_quote() {
+    awk '
+        BEGIN {
+            ORS = ""
+            for (n = 1; n < 32; n++) ctrl[sprintf("%c", n)] = n
+        }
+        {
+            for (i = 1; i <= length($0); i++) {
+                c = substr($0, i, 1)
+                if (c == "\\") printf "\\\\"
+                else if (c == "\"") printf "\\\""
+                else if (c == "\b") printf "\\b"
+                else if (c == "\f") printf "\\f"
+                else if (c == "\n") printf "\\n"
+                else if (c == "\t") printf "\\t"
+                else if (c == "\r") printf "\\r"
+                else if (c in ctrl) printf "\\u%04x", ctrl[c]
+                else printf "%s", c
+            }
+        }
+    '
+}
+
+curl_config_quote() {
     awk '
         BEGIN { ORS = "" }
         {
@@ -398,8 +419,8 @@ settings_parse() {
                 value_start = skip_ws(colon + 1)
                 value_end = scan_value(value_start)
                 raw_value = substr(s, value_start, value_end - value_start)
-                if (substr(raw_value, 1, 1) == "\"" && !is_managed(key)) {
-                    printf "%s\t%s\n", key, raw_value
+                if (!is_managed(key)) {
+                    printf "%s\t%s\n", key, minify(raw_value)
                 }
                 i = skip_ws(value_end)
                 if (substr(s, i, 1) == ",") i++
@@ -437,6 +458,44 @@ settings_parse() {
     ' "$file"
 }
 
+env_file_to_json() {
+    env_file=$1
+    tab=$(printf '\t')
+    printf '{\n'
+    env_first=1
+    while IFS="$tab" read -r key raw_value; do
+        [ -n "$key" ] || continue
+        if [ "$env_first" -eq 0 ]; then
+            printf ',\n'
+        fi
+        printf '  "'
+        printf '%s' "$key" | json_quote
+        printf '": %s' "$raw_value"
+        env_first=0
+    done <"$env_file"
+    printf '\n}\n'
+}
+
+write_settings_json_with_jq() {
+    env_file=$1
+    out_file=$2
+    env_json_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-env-json.XXXXXX") || exit 1
+    env_file_to_json "$env_file" >"$env_json_tmp" || {
+        rm -f "$env_json_tmp"
+        return 1
+    }
+    if [ -f "$SETTINGS_FILE" ]; then
+        jq --slurpfile ccs_env "$env_json_tmp" \
+            'if type == "object" then del(.apiKeyHelper) | .env = $ccs_env[0] else {"env": $ccs_env[0]} end' \
+            "$SETTINGS_FILE" >"$out_file" 2>/dev/null
+    else
+        jq --slurpfile ccs_env "$env_json_tmp" -n '{"env": $ccs_env[0]}' >"$out_file" 2>/dev/null
+    fi
+    rc=$?
+    rm -f "$env_json_tmp"
+    return "$rc"
+}
+
 write_settings_json() {
     other_file=$1
     env_file=$2
@@ -446,40 +505,44 @@ write_settings_json() {
     fi
     mkdir -p "$settings_dir" || die "cannot create settings directory"
     tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-settings.XXXXXX") || exit 1
-    {
-        printf '{\n'
-        first=1
-        while IFS= read -r field; do
-            [ -n "$field" ] || continue
+    if command -v jq >/dev/null 2>&1 && write_settings_json_with_jq "$env_file" "$tmp"; then
+        :
+    else
+        {
+            printf '{\n'
+            first=1
+            while IFS= read -r field; do
+                [ -n "$field" ] || continue
+                if [ "$first" -eq 0 ]; then
+                    printf ',\n'
+                fi
+                printf '  %s' "$field"
+                first=0
+            done <"$other_file"
             if [ "$first" -eq 0 ]; then
                 printf ',\n'
             fi
-            printf '  %s' "$field"
-            first=0
-        done <"$other_file"
-        if [ "$first" -eq 0 ]; then
-            printf ',\n'
-        fi
-        printf '  "env": {\n'
-        env_first=1
-        tab=$(printf '\t')
-        while IFS="$tab" read -r key raw_value; do
-            [ -n "$key" ] || continue
-            if [ "$env_first" -eq 0 ]; then
-                printf ',\n'
-            fi
-            printf '    "'
-            printf '%s' "$key" | json_quote
-            printf '": %s' "$raw_value"
-            env_first=0
-        done <"$env_file"
-        printf '\n  }\n'
-        printf '}\n'
-    } >"$tmp" || {
-        rm -f "$tmp"
-        die "cannot write temporary settings file"
-    }
-    chmod 600 "$tmp" 2>/dev/null || true
+            printf '  "env": {\n'
+            env_first=1
+            tab=$(printf '\t')
+            while IFS="$tab" read -r key raw_value; do
+                [ -n "$key" ] || continue
+                if [ "$env_first" -eq 0 ]; then
+                    printf ',\n'
+                fi
+                printf '    "'
+                printf '%s' "$key" | json_quote
+                printf '": %s' "$raw_value"
+                env_first=0
+            done <"$env_file"
+            printf '\n  }\n'
+            printf '}\n'
+        } >"$tmp" || {
+            rm -f "$tmp"
+            die "cannot write temporary settings file"
+        }
+    fi
+    chmod_private_file "$tmp"
     mv "$tmp" "$SETTINGS_FILE" || {
         rm -f "$tmp"
         die "cannot write settings file: $SETTINGS_FILE"
@@ -679,7 +742,7 @@ set_active() {
         rm -f "$tmp"
         die "cannot write active provider"
     }
-    chmod 600 "$tmp" 2>/dev/null || true
+    chmod_private_file "$tmp"
     mv "$tmp" "$ACTIVE_FILE" || {
         rm -f "$tmp"
         die "cannot update active provider"
@@ -693,7 +756,7 @@ clear_active() {
         rm -f "$tmp"
         die "cannot write active provider"
     }
-    chmod 600 "$tmp" 2>/dev/null || true
+    chmod_private_file "$tmp"
     mv "$tmp" "$ACTIVE_FILE" || {
         rm -f "$tmp"
         die "cannot update active provider"
@@ -703,7 +766,7 @@ clear_active() {
 cmd_init() {
     ensure_dirs
     [ -f "$ACTIVE_FILE" ] || : >"$ACTIVE_FILE"
-    chmod 600 "$ACTIVE_FILE" 2>/dev/null || true
+    chmod_private_file "$ACTIVE_FILE"
     printf 'ok dir:    %s\n' "$CCS_DIR"
     printf 'Set a provider:   ccs set <name> --base-url <url> --key <key>\n'
 }
@@ -1009,6 +1072,43 @@ cmd_preset() {
     esac
 }
 
+is_loopback_http_url() {
+    case "$1" in
+        http://*) ;;
+        *) return 1 ;;
+    esac
+
+    authority=${1#http://}
+    authority=${authority%%/*}
+    case "$authority" in
+        localhost|localhost:*) return 0 ;;
+        \[::1\]|\[::1\]:*) return 0 ;;
+    esac
+
+    host=${authority%%:*}
+    case "$host" in
+        127.[0-9]*.[0-9]*.[0-9]*)
+            first=${host%%.*}
+            rest=${host#*.}
+            second=${rest%%.*}
+            rest=${rest#*.}
+            third=${rest%%.*}
+            fourth=${rest#*.}
+            case "$fourth" in
+                *.*) return 1 ;;
+            esac
+            for octet in "$first" "$second" "$third" "$fourth"; do
+                case "$octet" in
+                    ''|*[!0-9]*) return 1 ;;
+                esac
+                [ "$octet" -le 255 ] || return 1
+            done
+            return 0
+            ;;
+    esac
+    return 1
+}
+
 verify_request() {
     base_url=$1
     key=$2
@@ -1025,35 +1125,42 @@ verify_request() {
     (
         body_tmp=
         err_tmp=
-        trap 'rm -f "$body_tmp" "$err_tmp"' HUP INT TERM EXIT
+        hdr_tmp=
+        trap 'rm -f "$body_tmp" "$err_tmp" "$hdr_tmp"' HUP INT TERM EXIT
         body_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-body.XXXXXX") || exit 1
         err_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-curl.XXXXXX") || exit 1
+        hdr_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-hdr.XXXXXX") || exit 1
+        chmod_private_file "$hdr_tmp"
         model_json=$(printf '%s' "$model" | json_quote)
         body='{"model":"'"$model_json"'","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}'
         url=${base_url%/}/v1/messages
-        if [ "$auth" = "$AUTH_TOKEN" ]; then
-            status=$(curl -sS -m "$VERIFY_TIMEOUT" -o "$body_tmp" -w '%{http_code}' \
-                -X POST "$url" \
-                -H 'anthropic-version: 2023-06-01' \
-                -H 'content-type: application/json' \
-                -H "Authorization: Bearer $key" \
-                --data "$body" 2>"$err_tmp") || {
-                msg=$(sed -n '1p' "$err_tmp")
-                printf 'Connection failed: %s\n' "$msg"
-                exit 1
-            }
-        else
-            status=$(curl -sS -m "$VERIFY_TIMEOUT" -o "$body_tmp" -w '%{http_code}' \
-                -X POST "$url" \
-                -H 'anthropic-version: 2023-06-01' \
-                -H 'content-type: application/json' \
-                -H "x-api-key: $key" \
-                --data "$body" 2>"$err_tmp") || {
-                msg=$(sed -n '1p' "$err_tmp")
-                printf 'Connection failed: %s\n' "$msg"
-                exit 1
-            }
+        printf 'verifying against %s\n' "$url" >&2
+        if [ "${base_url#http://}" != "$base_url" ] && ! is_loopback_http_url "$base_url"; then
+            printf 'warning: sending provider secret over plain HTTP to %s\n' "$url" >&2
         fi
+        if [ "$auth" = "$AUTH_TOKEN" ]; then
+            {
+                printf 'header = "Authorization: Bearer '
+                printf '%s' "$key" | curl_config_quote
+                printf '"\n'
+            } >"$hdr_tmp"
+        else
+            {
+                printf 'header = "x-api-key: '
+                printf '%s' "$key" | curl_config_quote
+                printf '"\n'
+            } >"$hdr_tmp"
+        fi
+        status=$(curl -sS -m "$VERIFY_TIMEOUT" -o "$body_tmp" -w '%{http_code}' \
+            -X POST "$url" \
+            -H 'anthropic-version: 2023-06-01' \
+            -H 'content-type: application/json' \
+            --config "$hdr_tmp" \
+            --data "$body" 2>"$err_tmp") || {
+            msg=$(sed -n '1p' "$err_tmp")
+            printf 'Connection failed: %s\n' "$msg"
+            exit 1
+        }
 
         case "$status" in
             2*) printf 'OK (%s)\n' "$status"; exit 0 ;;
