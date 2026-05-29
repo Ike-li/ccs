@@ -22,6 +22,7 @@ All notable changes to `ccs` are documented here.
 - Package the full `docs/` directory in future release archives so README links remain valid.
 - Extend DeepSeek and OpenRouter presets with Claude Code subagent/effort env from their provider recipes.
 - Clarify the Hugging Face recipe's single-secret `ccs` behavior against Hugging Face's two-env manual launch example.
+- Update GitHub Actions workflow dependencies to Node 24-compatible major versions.
 
 ### Fixed
 
