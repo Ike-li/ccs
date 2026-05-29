@@ -1272,7 +1272,9 @@ cmd_rm() {
 
 main() {
     cmd=${1:-ls}
-    [ "$#" -gt 0 ] && shift || true
+    if [ "$#" -gt 0 ]; then
+        shift
+    fi
     case "$cmd" in
         init) cmd_init "$@" ;;
         set) cmd_set "$@" ;;
