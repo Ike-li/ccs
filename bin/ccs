@@ -129,6 +129,13 @@ secret_env_name() {
     fi
 }
 
+prefers_auth_token() {
+    case "$1" in
+        https://api.deepseek.com/anthropic|https://api.deepseek.com/anthropic/*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 conf_get() {
     file=$1
     key=$2
@@ -756,7 +763,10 @@ cmd_set() {
 
     if [ "$options_provided" -eq 0 ]; then
         base_url=$(prompt_required "Base URL" "$current_base_url")
-        auth=$(prompt_auth "$current_auth")
+        if [ "$created" -eq 1 ] && prefers_auth_token "$base_url"; then
+            auth=$AUTH_TOKEN
+        fi
+        auth=$(prompt_auth "$auth")
         env_name=$(secret_env_name "$auth")
         if [ "$created" -eq 1 ]; then
             key_arg=$(prompt_optional "Key for $env_name" "" 1)
@@ -775,6 +785,9 @@ cmd_set() {
         haiku_model=$(prompt_optional "Haiku model (optional)" "$haiku_default" 0)
     elif [ "$created" -eq 1 ]; then
         [ -n "$base_url" ] || base_url=$(prompt_required "Base URL")
+        if [ -z "$auth_flag" ] && prefers_auth_token "$base_url"; then
+            auth=$AUTH_TOKEN
+        fi
         if [ -z "$key_arg" ]; then
             key_arg=$(prompt_optional "Key for $(secret_env_name "$auth")" "" 1)
         fi
@@ -932,6 +945,15 @@ warn_shell_secret_conflict() {
     use_note "Same terminal cleanup: unset $other_env before starting Claude Code."
 }
 
+warn_preferred_auth_token() {
+    provider_name=$1
+    auth=$2
+    base_url=$3
+    if [ "$auth" = "$AUTH_API_KEY" ] && prefers_auth_token "$base_url"; then
+        use_note "warning: DeepSeek Claude Code docs use ANTHROPIC_AUTH_TOKEN. Run: ccs set $provider_name --use-auth-token && ccs use $provider_name"
+    fi
+}
+
 print_shell_cleanup() {
     seen=' '
     for env_key in $MANAGED_ENV_KEYS; do
@@ -987,6 +1009,7 @@ cmd_use() {
     apply_provider "$name"
     use_note "switched -> $name"
     use_note "base_url: $base_url"
+    warn_preferred_auth_token "$name" "$auth" "$base_url"
     if [ "$use_shell" -eq 1 ]; then
         print_shell_cleanup
         use_note "Current shell cleanup commands were printed to stdout."

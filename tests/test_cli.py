@@ -118,6 +118,26 @@ def test_auth_token_provider_writes_auth_token_only(_isolate_home):
     assert "ANTHROPIC_API_KEY" not in data["env"]
 
 
+def test_deepseek_provider_defaults_to_auth_token(_isolate_home):
+    run(_isolate_home, "init")
+    run(
+        _isolate_home,
+        "set",
+        "ds",
+        "--base-url",
+        "https://api.deepseek.com/anthropic",
+        "--key",
+        "sk-ds",
+    )
+    run(_isolate_home, "use", "ds", "--no-verify")
+
+    conf = provider_conf(_isolate_home, "ds")
+    data = settings(_isolate_home)
+    assert conf["auth"] == "auth_token"
+    assert data["env"]["ANTHROPIC_AUTH_TOKEN"] == "sk-ds"
+    assert "ANTHROPIC_API_KEY" not in data["env"]
+
+
 def test_switch_between_auth_types_cleans_previous_secret(_isolate_home):
     run(_isolate_home, "init")
     run(_isolate_home, "set", "token", "--base-url", "https://token.example", "--key", "sk-token", "--use-auth-token")
@@ -152,6 +172,26 @@ def test_use_warns_about_opposite_secret_in_current_shell(_isolate_home):
     assert "Same terminal cleanup: unset ANTHROPIC_AUTH_TOKEN" in result.stdout
     assert "current shell exports ANTHROPIC_AUTH_TOKEN" in result.stderr
     assert "shell-token" not in result.stderr
+
+
+def test_use_warns_when_deepseek_provider_uses_api_key(_isolate_home):
+    run(_isolate_home, "init")
+    run(
+        _isolate_home,
+        "set",
+        "ds",
+        "--base-url",
+        "https://api.deepseek.com/anthropic",
+        "--key",
+        "sk-ds",
+        "--use-api-key",
+    )
+
+    result = run(_isolate_home, "use", "ds", "--no-verify")
+
+    assert "switched -> ds" in result.stdout
+    assert "DeepSeek Claude Code docs use ANTHROPIC_AUTH_TOKEN" in result.stdout
+    assert "ccs set ds --use-auth-token && ccs use ds" in result.stdout
 
 
 def test_use_shell_mode_prints_eval_safe_cleanup(_isolate_home):

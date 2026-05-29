@@ -12,6 +12,7 @@ Thumbs.db
 # Claude Code
 .claude/
 .omc/
+docs/claude-code-providers.md
 
 # Build artifacts
 *.egg-info/

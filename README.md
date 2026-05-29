@@ -167,6 +167,13 @@ ccs set kimi \
   --haiku-model kimi-k2.6
 ```
 
+DeepSeek 的 Claude Code 接入文档使用 `ANTHROPIC_AUTH_TOKEN` / Bearer auth。`ccs set` 遇到官方 Anthropic 兼容地址会默认选 auth token；如果已有旧配置写成了 API key 模式，可以这样切换：
+
+```bash
+ccs set ds --use-auth-token
+ccs use ds
+```
+
 不想让 key 出现在 shell history，可以从 stdin 读取：
 
 ```bash
