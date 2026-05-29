@@ -21,7 +21,7 @@ No proxy. No daemon. No Node. Just switch Claude Code providers safely.
 ## 60 秒上手
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Ike-li/ccs/main/install.sh | sh
+brew install Ike-li/tap/ccs
 ccs init
 ccs set deepseek \
   --base-url https://api.deepseek.com/anthropic \
@@ -33,7 +33,7 @@ ccs use deepseek
 
 切换后重启 Claude Code 会话，让新 settings 生效。
 
-如果要固定安装某个 tag：
+不用 Homebrew 时，也可以用安装脚本：
 
 ```bash
 CCS_INSTALL_REF=v0.5.0 sh -c "$(curl -fsSL https://raw.githubusercontent.com/Ike-li/ccs/main/install.sh)"
@@ -52,7 +52,13 @@ CCS_INSTALL_REF=v0.5.0 sh -c "$(curl -fsSL https://raw.githubusercontent.com/Ike
 
 ## 安装
 
-推荐一行安装到 `~/.local/bin`：
+推荐通过 Homebrew 安装：
+
+```bash
+brew install Ike-li/tap/ccs
+```
+
+不用 Homebrew 时，可以一行安装到 `~/.local/bin`：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Ike-li/ccs/main/install.sh | sh

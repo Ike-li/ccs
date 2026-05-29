@@ -1,6 +1,6 @@
 # Releasing
 
-This project is a single POSIX shell script plus completions and docs. Releases should make the install path boring: tag, GitHub Release assets, checksum, then optional Homebrew tap update.
+This project is a single POSIX shell script plus completions and docs. Releases should make the install path boring: tag, GitHub Release assets, checksum, then Homebrew tap update.
 
 ## Version checklist
 
@@ -42,7 +42,7 @@ CCS_INSTALL_REF=v0.5.0 sh -c "$(curl -fsSL https://raw.githubusercontent.com/Ike
 
 ## Homebrew tap
 
-After a release exists, update a tap formula with the release tarball URL and sha256.
+After a release exists, update `Ike-li/homebrew-tap` with the release tarball URL and sha256.
 
 Example formula:
 
@@ -69,14 +69,14 @@ end
 Recommended tap flow:
 
 ```bash
-brew tap-new Ike-li/tap
-mkdir -p "$(brew --repository Ike-li/tap)/Formula"
-"${EDITOR:-vi}" "$(brew --repository Ike-li/tap)/Formula/ccs.rb"
+git clone https://github.com/Ike-li/homebrew-tap.git
+cd homebrew-tap
+"${EDITOR:-vi}" Formula/ccs.rb
 brew audit --strict --online Ike-li/tap/ccs
 brew test Ike-li/tap/ccs
 ```
 
-Once the tap is published, README can promote:
+User install command:
 
 ```bash
 brew install Ike-li/tap/ccs
