@@ -1,0 +1,60 @@
+name: Provider recipe
+description: Suggest or update an Anthropic-compatible provider recipe.
+title: "[provider]: "
+labels: ["provider", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Provider recipes must target endpoints that Claude Code can use through Anthropic-compatible settings. Do not paste real provider keys.
+  - type: input
+    id: provider
+    attributes:
+      label: Provider name
+      placeholder: "ExampleAI"
+    validations:
+      required: true
+  - type: input
+    id: docs
+    attributes:
+      label: Official Claude Code or Anthropic-compatible docs
+      placeholder: "https://..."
+    validations:
+      required: true
+  - type: input
+    id: base_url
+    attributes:
+      label: Base URL
+      placeholder: "https://api.example.com/anthropic"
+    validations:
+      required: true
+  - type: dropdown
+    id: auth_mode
+    attributes:
+      label: Secret env
+      options:
+        - ANTHROPIC_API_KEY
+        - ANTHROPIC_AUTH_TOKEN
+        - unsure
+    validations:
+      required: true
+  - type: textarea
+    id: models
+    attributes:
+      label: Model defaults
+      description: Include documented model, opus, sonnet, and haiku aliases if available.
+      placeholder: |
+        ANTHROPIC_MODEL=...
+        ANTHROPIC_DEFAULT_OPUS_MODEL=...
+        ANTHROPIC_DEFAULT_SONNET_MODEL=...
+        ANTHROPIC_DEFAULT_HAIKU_MODEL=...
+  - type: textarea
+    id: tested
+    attributes:
+      label: What did you test?
+      description: Include `ccs verify`, `ccs doctor`, or Claude Code startup results if you tried them.
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Region-specific URLs, login requirements, `/logout` notes, or provider quirks.

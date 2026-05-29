@@ -1,0 +1,46 @@
+name: Feature request
+description: Suggest a focused improvement to ccs.
+title: "[feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        `ccs` is a Claude Code provider switcher, not a proxy or protocol translation gateway. Please keep requests inside that boundary when possible.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what is painful today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the smallest behavior or command that would solve it.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: For example hand-editing settings, shell exports, a local gateway, or a wrapper script.
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - CLI behavior
+        - provider recipe
+        - docs
+        - install/release
+        - diagnostics
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Extra context
+      description: Links to provider docs are especially useful.

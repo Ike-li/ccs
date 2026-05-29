@@ -1,24 +1,36 @@
-# ccs
+# ccs: Claude Code provider switcher
 
 [![CI](https://github.com/Ike-li/ccs/actions/workflows/test.yml/badge.svg)](https://github.com/Ike-li/ccs/actions/workflows/test.yml)
 [![Release](https://img.shields.io/github/v/release/Ike-li/ccs?sort=semver)](https://github.com/Ike-li/ccs/releases)
+[![Homebrew](https://img.shields.io/badge/install-Homebrew-fbb040.svg)](#安装)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Shell](https://img.shields.io/badge/runtime-POSIX%20sh-2f7d32.svg)](bin/ccs)
+[![Claude Code](https://img.shields.io/badge/Claude%20Code-provider%20switcher-6b5cff.svg)](docs/compare.md)
 
-No proxy. No daemon. No Node. Just switch Claude Code providers safely.
+Switch Claude Code between Anthropic-compatible providers in seconds. No proxy. No daemon. No Node runtime.
 
-`ccs` 是一个极小的 Claude Code provider 切换工具。它不做协议转换、不启动本地代理，只负责把当前 provider 的 `ANTHROPIC_BASE_URL` 和对应 secret 写进 Claude Code 官方支持的 `~/.claude/settings.json`：
+`ccs` 是一个极小的 Claude Code provider switcher。它管理多个 Anthropic-compatible endpoints，并把当前 provider 的 `ANTHROPIC_BASE_URL` 和对应 secret 写进 Claude Code 官方支持的 `~/.claude/settings.json`：
 
 - API key provider 写 `ANTHROPIC_API_KEY`
 - Bearer token provider 写 `ANTHROPIC_AUTH_TOKEN`
 
-适合：Anthropic-compatible endpoint、LiteLLM/企业网关、OpenRouter、DeepSeek、Kimi 等已经能直接接 Claude Code 的场景。
+适合：Anthropic-compatible endpoint、LiteLLM/企业网关、OpenRouter、DeepSeek、Kimi 等已经能直接接 Claude Code 的场景。不适合：把 OpenAI/Gemini/Ollama 协议转换成 Anthropic Messages API；那是 router/gateway 的工作。
 
-不适合：把 OpenAI/Gemini/Ollama 协议转换成 Anthropic Messages API。那是 router/gateway 的工作，不是 `ccs` 的工作。
+<sub>Search terms: Claude Code provider switcher, Anthropic-compatible endpoint manager, OpenRouter / DeepSeek / Kimi / LiteLLM setup helper, API key and auth token conflict doctor.</sub>
 
-这是一个纯 shell 版本，运行时不依赖 Python、Node、jq 或 daemon。macOS 和常见 Linux 发行版自带的 `/bin/sh`、`awk`、`sed`、`stty` 即可运行；只有一行安装和 `ccs verify` / 默认 `ccs use` 验证请求需要 `curl`。
+## 30 秒判断
+
+| 如果你正在... | `ccs` 帮你... |
+|---|---|
+| 在多个 Claude Code provider 之间切换 | 用 `ccs use <name>` 改 active provider，不反复手改 JSON |
+| 配 DeepSeek、OpenRouter、Kimi 或企业网关 | 用 preset / recipe 固化 base URL、auth mode 和模型 alias |
+| 遇到 API key 和 auth token 冲突 | 用 `ccs doctor` 找出 settings 和当前 shell 的冲突来源 |
+| 想避免本地代理和额外运行时 | 只用 POSIX `sh` 写官方 `settings.json`，不启动 daemon |
+| 想给团队复用配置路径 | 用可复制命令、Homebrew 安装和明确定义的 provider 文件布局 |
 
 ## 60 秒上手
+
+推荐通过 Homebrew 安装：
 
 ```bash
 brew install Ike-li/tap/ccs
@@ -36,6 +48,25 @@ ccs use deepseek
 ```bash
 CCS_INSTALL_REF=v0.6.0 sh -c "$(curl -fsSL https://raw.githubusercontent.com/Ike-li/ccs/main/install.sh)"
 ```
+
+## 使用场景
+
+- 在 Anthropic、DeepSeek、OpenRouter、Kimi、Hugging Face 或企业 Anthropic-compatible gateway 之间切换。
+- 给 LiteLLM / 内部网关用户提供一个不改变上游架构的 Claude Code 配置入口。
+- 把 provider recipe 写进 README、runbook 或 onboarding 文档，让新成员少踩 auth mode 和 model alias 的坑。
+- 用 `ccs doctor` 检查 Claude Code 是否能读到当前 settings、是否有 secret 冲突、active provider 是否完整。
+- 在不引入 Node/Python runtime、不运行本地 proxy 的前提下，保持配置可审计、可复制、可删除。
+
+## 和其他方式比
+
+| 方式 | 适合 | 主要代价 | `ccs` 的定位 |
+|---|---|---|---|
+| 手改 `~/.claude/settings.json` | 一次性实验 | 容易写错 env、残留旧 key、难复现 | 把切换动作变成命令和 provider 文件 |
+| `export ANTHROPIC_*` 脚本 | 临时 shell 会话 | 容易和 settings 互相冲突，换终端就丢 | 写入 Claude Code 官方 settings，并提示 shell cleanup |
+| 本地 proxy / router | 协议转换、多模型路由 | 需要常驻进程、端口、更多配置 | 不代理请求，只切换已兼容 Claude Code 的 endpoint |
+| 密钥管理器 / `.env` 工具 | 加密和团队密钥治理 | 不负责 Claude Code provider 语义 | 保持轻量；明文边界写清楚，必要时可和密钥流程搭配 |
+
+更完整的取舍见 [docs/compare.md](docs/compare.md)。
 
 ## 功能
 
@@ -336,8 +367,10 @@ Claude Code 启动时如果报 `Auth conflict: Both a token ... and an API key .
 ## 项目维护
 
 - 版本变化见 [CHANGELOG.md](CHANGELOG.md)
+- 和手改 settings、shell export、本地 proxy 的对比见 [docs/compare.md](docs/compare.md)
 - 贡献说明见 [CONTRIBUTING.md](CONTRIBUTING.md)
 - 安全边界和漏洞报告见 [SECURITY.md](SECURITY.md)
+- 传播文案和 awesome-list pitch 见 [docs/outreach.md](docs/outreach.md)
 
 ## 完全卸载
 
@@ -356,4 +389,4 @@ rm -rf ~/.config/ccs
 
 ## License
 
-GPL-3.0 — see [LICENSE](LICENSE).
+GPL-3.0 - see [LICENSE](LICENSE).

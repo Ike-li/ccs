@@ -18,6 +18,18 @@ uv run --no-project --with ruff ruff format --check tests
 
 If you do not use `uv`, install `pytest` and `ruff` in your preferred Python environment and run the same commands.
 
+## Good first contributions
+
+Useful small contributions include:
+
+- Add or correct a provider recipe in `docs/providers.md`.
+- Improve `ccs doctor` diagnostics for a real failure mode.
+- Add a regression test for a CLI edge case.
+- Improve shell completion coverage.
+- Tighten README or troubleshooting copy after trying the first-run path.
+
+Please use the GitHub issue templates when reporting bugs, requesting features, or suggesting provider recipes. They are designed to collect the version, install path, auth mode, and safe redacted diagnostics without exposing provider keys.
+
 ## Pull request guidelines
 
 - Keep changes focused and reviewable.

@@ -1,0 +1,70 @@
+name: Bug report
+description: Report a reproducible ccs problem.
+title: "[bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Do not paste real provider keys, tokens, or full settings files.
+  - type: input
+    id: version
+    attributes:
+      label: ccs version
+      description: Run `ccs --version`.
+      placeholder: "ccs 0.6.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: install_method
+    attributes:
+      label: Install method
+      options:
+        - Homebrew
+        - install.sh
+        - local repository
+        - other
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: OS and shell
+      placeholder: "macOS 15.5, zsh 5.9"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Use fake keys such as `sk-...`.
+      placeholder: |
+        1. ccs init
+        2. ccs preset deepseek --key sk-...
+        3. ccs use deepseek
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Paste command output after removing secrets.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: ccs doctor output
+      description: Run `ccs doctor` and redact anything sensitive. It should not print full keys.
+      render: text
+  - type: textarea
+    id: extra
+    attributes:
+      label: Extra context
+      description: Provider name, base URL shape, auth mode, or anything else useful. Do not paste real keys.

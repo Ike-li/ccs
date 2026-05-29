@@ -2,6 +2,21 @@
 
 All notable changes to `ccs` are documented here.
 
+## Unreleased
+
+### Added
+
+- Add a comparison guide for hand-edited settings, shell exports, proxies, gateways, and `ccs`.
+- Add GitHub issue forms for bugs, feature requests, and provider recipes.
+- Add a pull request template with verification and secret-handling checklist items.
+- Add outreach copy for GitHub topics, awesome-list submissions, and Chinese community posts.
+
+### Changed
+
+- Rework the README first screen around fast positioning, use cases, comparison, and SEO keywords.
+- Add clearer contribution entry points for first-time contributors.
+- Package the full `docs/` directory in future release archives so README links remain valid.
+
 ## v0.6.0 - 2026-05-29
 
 ### Added
