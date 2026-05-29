@@ -28,6 +28,15 @@ ccs use anthropic
 
 DeepSeek's Claude Code guide uses Bearer auth via `ANTHROPIC_AUTH_TOKEN`.
 
+Fast path:
+
+```bash
+ccs preset deepseek --key sk-...
+ccs use deepseek
+```
+
+Equivalent explicit setup:
+
 ```bash
 ccs set deepseek \
   --base-url https://api.deepseek.com/anthropic \
@@ -49,6 +58,15 @@ ccs use deepseek
 ## OpenRouter
 
 OpenRouter's Claude Code guide uses `https://openrouter.ai/api` and `ANTHROPIC_AUTH_TOKEN`.
+
+Fast path:
+
+```bash
+ccs preset openrouter --key sk-or-v1-...
+ccs use openrouter
+```
+
+Equivalent explicit setup:
 
 ```bash
 ccs set openrouter \

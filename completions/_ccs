@@ -20,8 +20,10 @@ _ccs() {
     commands=(
         'init:Initialize ccs config dir'
         'set:Create or update a provider'
+        'preset:Create or update a provider from a known recipe'
         'use:Switch active provider'
         'verify:Verify a provider'
+        'doctor:Diagnose local ccs and Claude Code settings'
         'ls:List providers'
         'list:List providers'
         'current:Show active provider'
@@ -83,6 +85,13 @@ _ccs() {
                         '*--env+[Extra env]:KEY=VALUE:' \
                         "--unset-env[Remove env key]:key:_values env $managed_envs" \
                         ':provider:_values provider $providers'
+                    ;;
+                preset)
+                    _arguments \
+                        '--key[Provider key (- reads stdin)]:key:' \
+                        '--name[Provider name to write]:name:' \
+                        '--help[Show preset help]' \
+                        ':preset:_values preset deepseek openrouter'
                     ;;
             esac
             ;;

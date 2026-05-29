@@ -423,6 +423,7 @@ def test_set_help_uses_simple_auth_flags(_isolate_home):
 def test_top_level_help_mentions_shell_use_mode(_isolate_home):
     result = run(_isolate_home, "--help")
 
+    assert "ccs preset <deepseek|openrouter> --key KEY [--name NAME]" in result.stdout
     assert "ccs use <name> [--no-verify] [--shell]" in result.stdout
     assert "ccs doctor" in result.stdout
 
@@ -600,6 +601,47 @@ def test_set_rejects_invalid_provider_name(_isolate_home):
     result = run(_isolate_home, "set", "../etc", "--base-url", "https://x", "--key", "k", check=False)
     assert result.returncode != 0
     assert "provider name may only contain" in result.stderr
+
+
+def test_preset_deepseek_configures_provider(_isolate_home):
+    run(_isolate_home, "init")
+
+    result = run(_isolate_home, "preset", "deepseek", "--key", "sk-ds")
+    run(_isolate_home, "use", "deepseek", "--no-verify")
+
+    conf = provider_conf(_isolate_home, "deepseek")
+    data = settings(_isolate_home)
+    assert "created deepseek" in result.stdout
+    assert conf["auth"] == "auth_token"
+    assert conf["ANTHROPIC_BASE_URL"] == "https://api.deepseek.com/anthropic"
+    assert conf["ANTHROPIC_MODEL"] == "deepseek-v4-pro[1m]"
+    assert conf["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "deepseek-v4-pro[1m]"
+    assert conf["ANTHROPIC_DEFAULT_SONNET_MODEL"] == "deepseek-v4-pro[1m]"
+    assert conf["ANTHROPIC_DEFAULT_HAIKU_MODEL"] == "deepseek-v4-flash"
+    assert data["env"]["ANTHROPIC_AUTH_TOKEN"] == "sk-ds"
+    assert "ANTHROPIC_API_KEY" not in data["env"]
+
+
+def test_preset_openrouter_supports_custom_name_and_stdin_key(_isolate_home):
+    run(_isolate_home, "init")
+
+    result = run(_isolate_home, "preset", "openrouter", "--name", "or", "--key", "-", input_text="sk-or\n")
+
+    conf = provider_conf(_isolate_home, "or")
+    assert "created or" in result.stdout
+    assert conf["auth"] == "auth_token"
+    assert conf["key"] == "sk-or"
+    assert conf["ANTHROPIC_BASE_URL"] == "https://openrouter.ai/api"
+    assert conf["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "~anthropic/claude-opus-latest"
+    assert conf["ANTHROPIC_DEFAULT_SONNET_MODEL"] == "~anthropic/claude-sonnet-latest"
+    assert conf["ANTHROPIC_DEFAULT_HAIKU_MODEL"] == "~anthropic/claude-haiku-latest"
+
+
+def test_preset_rejects_unknown_provider(_isolate_home):
+    result = run(_isolate_home, "preset", "unknown", "--key", "sk-x", check=False)
+
+    assert result.returncode != 0
+    assert "unknown preset: unknown" in result.stderr
 
 
 def test_doctor_reports_active_provider_without_failures(_isolate_home):

@@ -16,8 +16,8 @@ uv run --no-project --with pytest pytest tests/test_cli.py
 4. Create and push a signed or annotated tag:
 
 ```bash
-git tag -a v0.5.0 -m "ccs v0.5.0"
-git push origin main v0.5.0
+git tag -a v0.6.0 -m "ccs v0.6.0"
+git push origin main v0.6.0
 ```
 
 The release workflow creates:
@@ -37,7 +37,7 @@ curl -fsSL https://raw.githubusercontent.com/Ike-li/ccs/main/install.sh | sh
 Users can pin a tag:
 
 ```bash
-CCS_INSTALL_REF=v0.5.0 sh -c "$(curl -fsSL https://raw.githubusercontent.com/Ike-li/ccs/main/install.sh)"
+CCS_INSTALL_REF=v0.6.0 sh -c "$(curl -fsSL https://raw.githubusercontent.com/Ike-li/ccs/main/install.sh)"
 ```
 
 ## Homebrew tap
@@ -50,8 +50,8 @@ Example formula:
 class Ccs < Formula
   desc "Tiny Claude Code provider switcher"
   homepage "https://github.com/Ike-li/ccs"
-  url "https://github.com/Ike-li/ccs/releases/download/v0.5.0/ccs-v0.5.0.tar.gz"
-  sha256 "<sha256 from ccs-v0.5.0.sha256>"
+  url "https://github.com/Ike-li/ccs/releases/download/v0.6.0/ccs-v0.6.0.tar.gz"
+  sha256 "<sha256 from ccs-v0.6.0.sha256>"
   license "GPL-3.0-only"
 
   def install

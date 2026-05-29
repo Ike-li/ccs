@@ -23,11 +23,7 @@ No proxy. No daemon. No Node. Just switch Claude Code providers safely.
 ```bash
 brew install Ike-li/tap/ccs
 ccs init
-ccs set deepseek \
-  --base-url https://api.deepseek.com/anthropic \
-  --key sk-... \
-  --model 'deepseek-v4-pro[1m]' \
-  --haiku-model deepseek-v4-flash
+ccs preset deepseek --key sk-...
 ccs use deepseek
 ```
 
@@ -38,13 +34,14 @@ ccs use deepseek
 不用 Homebrew 时，也可以用安装脚本：
 
 ```bash
-CCS_INSTALL_REF=v0.5.0 sh -c "$(curl -fsSL https://raw.githubusercontent.com/Ike-li/ccs/main/install.sh)"
+CCS_INSTALL_REF=v0.6.0 sh -c "$(curl -fsSL https://raw.githubusercontent.com/Ike-li/ccs/main/install.sh)"
 ```
 
 ## 功能
 
 - `ccs set` 逐项填写 provider：name、base URL、secret env、key、默认模型和 `/model` alias 映射
 - `ccs set <name> ...` 支持脚本式创建或更新
+- `ccs preset <deepseek|openrouter>` 用内置 recipe 快速创建常见 provider
 - `ccs use <name>` 写入 Claude Code 的 `settings.json`
 - API key / auth token 二选一，切换时自动清理另一种 secret env
 - provider 配置保存在 `~/.config/ccs/providers/<name>.conf`
@@ -166,6 +163,8 @@ claude
 | `ccs set [name]` | 交互式创建或更新 provider |
 | `ccs set <name> --base-url URL --key KEY` | 脚本式创建或更新 provider |
 | `ccs set <name> --use-auth-token` | 把 secret 写到 `ANTHROPIC_AUTH_TOKEN` |
+| `ccs preset deepseek --key KEY` | 用内置 DeepSeek recipe 创建 provider |
+| `ccs preset openrouter --key KEY` | 用内置 OpenRouter recipe 创建 provider |
 | `ccs use <name>` | 切换 active provider，默认先 verify |
 | `ccs use <name> --no-verify` | 跳过 verify 直接切换 |
 | `ccs verify [name]` | 单独验证 provider |
@@ -220,6 +219,13 @@ ccs use ds
 ```
 
 更多 provider 配方见 [docs/providers.md](docs/providers.md)。
+
+常见 provider 可以直接用 preset：
+
+```bash
+ccs preset deepseek --key sk-...
+ccs preset openrouter --key sk-or-v1-...
+```
 
 不想让 key 出现在 shell history，可以从 stdin 读取：
 
@@ -290,6 +296,24 @@ ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-haiku-4-5
 ccs doctor
 ```
 
+正常配置后大致会看到：
+
+```text
+ccs doctor 0.6.0
+ok:   config dir exists: ~/.config/ccs
+ok:   providers configured: 1
+ok:   claude command found
+ok:   curl command found
+ok:   settings file exists: ~/.claude/settings.json
+ok:   settings file is readable
+ok:   settings file is writable
+ok:   active provider: deepseek
+ok:   active provider key is set: <len=8>
+ok:   active provider base URL: https://api.deepseek.com/anthropic
+ok:   active provider secret env: ANTHROPIC_AUTH_TOKEN
+summary: 0 failure(s), 0 warning(s)
+```
+
 ## 故障排查
 
 | `ccs verify` 输出 | 含义 | 建议处理 |
@@ -308,6 +332,12 @@ Claude Code 启动时如果报 `Auth conflict: Both a token ... and an API key .
 - `~/.claude/settings.json` 包含当前 active provider 的明文 key
 - 配置文件会尽量设置为 `0600`，配置目录为 `0700`
 - 如果 settings.json 会同步到云端或被备份，请按明文 secret 文件对待
+
+## 项目维护
+
+- 版本变化见 [CHANGELOG.md](CHANGELOG.md)
+- 贡献说明见 [CONTRIBUTING.md](CONTRIBUTING.md)
+- 安全边界和漏洞报告见 [SECURITY.md](SECURITY.md)
 
 ## 完全卸载
 

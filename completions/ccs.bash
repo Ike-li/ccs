@@ -17,7 +17,7 @@ _ccs() {
         cword=$COMP_CWORD
     fi
 
-    local commands="init set use verify ls list current show rm remove help --help --version -h -v"
+    local commands="init set preset use verify doctor ls list current show rm remove help --help --version -h -v"
     local providers_dir="${CCS_DIR:-$HOME/.config/ccs}/providers"
     local -a providers=()
     if [ -d "$providers_dir" ]; then
@@ -76,6 +76,20 @@ _ccs() {
                     COMPREPLY=( $(compgen -W "--base-url --key --use-api-key --use-auth-token --model --opus-model --sonnet-model --haiku-model --unset-model -e --env --unset-env --help $providers_str" -- "$cur") )
                     ;;
             esac
+            ;;
+        preset)
+            if [ "$cword" -eq 2 ]; then
+                # shellcheck disable=SC2207
+                COMPREPLY=( $(compgen -W "deepseek openrouter" -- "$cur") )
+            else
+                case "$prev" in
+                    --key|--name) ;;
+                    *)
+                        # shellcheck disable=SC2207
+                        COMPREPLY=( $(compgen -W "--key --name --help" -- "$cur") )
+                        ;;
+                esac
+            fi
             ;;
     esac
 }

@@ -2,7 +2,7 @@
 
 set -u
 
-CCS_VERSION=0.5.0
+CCS_VERSION=0.6.0
 CCS_DIR=${CCS_DIR:-"$HOME/.config/ccs"}
 PROVIDERS_DIR=$CCS_DIR/providers
 ACTIVE_FILE=$CCS_DIR/active
@@ -43,6 +43,7 @@ Usage:
   ccs set [name] [--base-url URL] [--key KEY] [--use-api-key|--use-auth-token]
                  [--model M] [--opus-model M] [--sonnet-model M] [--haiku-model M]
                  [--unset-model] [-e K=V] [--unset-env K]
+  ccs preset <deepseek|openrouter> --key KEY [--name NAME]
   ccs use <name> [--no-verify] [--shell]
   ccs verify [name]
   ccs doctor
@@ -72,6 +73,23 @@ Options:
   -e, --env K=V         extra ANTHROPIC_* env
   --unset-env K         remove an ANTHROPIC_* env key
   --help                show this help
+EOF
+}
+
+preset_usage() {
+    cat <<'EOF'
+Usage: ccs preset <PRESET> --key KEY [--name NAME]
+
+Create or update a provider from a known Claude Code recipe.
+
+Presets:
+  deepseek      https://api.deepseek.com/anthropic with auth token defaults
+  openrouter    https://openrouter.ai/api with auth token defaults
+
+Options:
+  --key KEY     provider key/token; use '-' to read from stdin
+  --name NAME   provider name to write; defaults to the preset name
+  --help        show this help
 EOF
 }
 
@@ -843,6 +861,83 @@ cmd_set() {
     trap - HUP INT TERM EXIT
 }
 
+cmd_preset() {
+    for arg do
+        case "$arg" in
+            --help) preset_usage; return 0 ;;
+        esac
+    done
+
+    [ "$#" -ge 1 ] || {
+        preset_usage
+        exit 1
+    }
+    preset=$1
+    shift
+
+    preset_key=
+    preset_name=
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --help)
+                preset_usage
+                return 0
+                ;;
+            --key)
+                [ "$#" -ge 2 ] || die "--key requires a value"
+                preset_key=$2
+                shift 2
+                ;;
+            --name)
+                [ "$#" -ge 2 ] || die "--name requires a value"
+                preset_name=$2
+                shift 2
+                ;;
+            --*)
+                die "unknown option: $1"
+                ;;
+            *)
+                die "unexpected argument: $1"
+                ;;
+        esac
+    done
+
+    [ -n "$preset_key" ] || die "--key is required"
+    if [ "$preset_key" = "-" ]; then
+        IFS= read -r preset_key || preset_key=
+    fi
+    [ -n "$preset_key" ] || die "--key is required"
+
+    case "$preset" in
+        deepseek)
+            [ -n "$preset_name" ] || preset_name=deepseek
+            require_provider_name "$preset_name"
+            cmd_set "$preset_name" \
+                --base-url "https://api.deepseek.com/anthropic" \
+                --key "$preset_key" \
+                --use-auth-token \
+                --model "deepseek-v4-pro[1m]" \
+                --opus-model "deepseek-v4-pro[1m]" \
+                --sonnet-model "deepseek-v4-pro[1m]" \
+                --haiku-model "deepseek-v4-flash"
+            ;;
+        openrouter)
+            [ -n "$preset_name" ] || preset_name=openrouter
+            require_provider_name "$preset_name"
+            cmd_set "$preset_name" \
+                --base-url "https://openrouter.ai/api" \
+                --key "$preset_key" \
+                --use-auth-token \
+                --opus-model "~anthropic/claude-opus-latest" \
+                --sonnet-model "~anthropic/claude-sonnet-latest" \
+                --haiku-model "~anthropic/claude-haiku-latest"
+            ;;
+        *)
+            die "unknown preset: $preset"
+            ;;
+    esac
+}
+
 verify_request() {
     base_url=$1
     key=$2
@@ -1278,6 +1373,7 @@ main() {
     case "$cmd" in
         init) cmd_init "$@" ;;
         set) cmd_set "$@" ;;
+        preset) cmd_preset "$@" ;;
         use) cmd_use "$@" ;;
         verify) cmd_verify "$@" ;;
         doctor) cmd_doctor "$@" ;;

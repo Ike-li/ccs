@@ -24,7 +24,7 @@ jobs:
           install -m 755 install.sh "$pkg/install.sh"
           cp completions/ccs.bash "$pkg/completions/ccs.bash"
           cp completions/_ccs "$pkg/completions/_ccs"
-          cp README.md LICENSE "$pkg/"
+          cp README.md LICENSE CHANGELOG.md CONTRIBUTING.md SECURITY.md "$pkg/"
           cp docs/providers.md docs/releasing.md "$pkg/docs/"
           tar -C "$pkg" -czf "dist/ccs-${tag}.tar.gz" .
           (cd dist && sha256sum "ccs-${tag}.tar.gz" >"ccs-${tag}.sha256")
