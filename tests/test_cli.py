@@ -752,7 +752,7 @@ def test_verify_uses_auth_specific_curl_header(_isolate_home, tmp_path):
     api_args = log_file.read_text()
     assert 'sk-"api\\key' not in "\n".join(line for line in api_args.splitlines() if line.startswith("ARG:"))
     assert 'CONFIG:header = "x-api-key: sk-\\"api\\\\key"' in api_args
-    assert "CONFIG:header = \"Authorization: Bearer" not in api_args
+    assert 'CONFIG:header = "Authorization: Bearer' not in api_args
     assert '"model":"model-opus"' in api_args
 
     log_file.write_text("")
@@ -771,7 +771,7 @@ def test_verify_uses_auth_specific_curl_header(_isolate_home, tmp_path):
     token_args = log_file.read_text()
     assert "sk-token" not in "\n".join(line for line in token_args.splitlines() if line.startswith("ARG:"))
     assert 'CONFIG:header = "Authorization: Bearer sk-token"' in token_args
-    assert "CONFIG:header = \"x-api-key:" not in token_args
+    assert 'CONFIG:header = "x-api-key:' not in token_args
 
 
 @pytest.mark.parametrize(
