@@ -23,6 +23,8 @@ def run(
     env = {**os.environ, "HOME": str(home), "CCS_VERIFY_TIMEOUT": "1"}
     env.pop("ANTHROPIC_API_KEY", None)
     env.pop("ANTHROPIC_AUTH_TOKEN", None)
+    env.pop("CCS_DIR", None)
+    env.pop("CLAUDE_SETTINGS_FILE", None)
     if env_extra:
         env.update(env_extra)
     result = subprocess.run(
@@ -671,6 +673,10 @@ def test_interactive_model_aliases_default_to_model(_isolate_home):
 
 def test_tty_auth_selector_accepts_arrow_keys(_isolate_home):
     env = {**os.environ, "HOME": str(_isolate_home)}
+    env.pop("ANTHROPIC_API_KEY", None)
+    env.pop("ANTHROPIC_AUTH_TOKEN", None)
+    env.pop("CCS_DIR", None)
+    env.pop("CLAUDE_SETTINGS_FILE", None)
     master_fd, slave_fd = pty.openpty()
     proc = None
     try:
@@ -837,6 +843,31 @@ def test_verify_warns_on_non_loopback_127_like_hostname(_isolate_home, tmp_path)
 
     assert "verifying against http://127.evil.example/v1/messages" in result.stderr
     assert "warning: sending provider secret over plain HTTP" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://127.0.0.1",
+        "http://localhost",
+        "http://[::1]",
+    ],
+)
+def test_verify_silent_on_loopback_http(_isolate_home, tmp_path, base_url):
+    fake_bin = tmp_path / "bin"
+    log_file = tmp_path / "curl.log"
+    write_fake_curl(fake_bin, log_file)
+    env_extra = {
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "CCS_FAKE_CURL_LOG": str(log_file),
+    }
+
+    run(_isolate_home, "init", env_extra=env_extra)
+    run(_isolate_home, "set", "api", "--base-url", base_url, "--key", "sk-api", env_extra=env_extra)
+    result = run(_isolate_home, "verify", "api", env_extra=env_extra)
+
+    assert f"verifying against {base_url}/v1/messages" in result.stderr
+    assert "warning: sending provider secret over plain HTTP" not in result.stderr
 
 
 def test_set_rejects_invalid_provider_name(_isolate_home):
@@ -1096,3 +1127,149 @@ done
     assert result.returncode != 0
     assert "checksum mismatch" in result.stderr
     assert not (install_dir / "ccs").exists()
+
+
+@pytest.mark.parametrize(
+    ("flag", "payload"),
+    [
+        ("--base-url", "https://ok\nANTHROPIC_DEFAULT_HAIKU_MODEL=evil"),
+        ("--key", "sk\nANTHROPIC_MODEL=evil"),
+    ],
+)
+def test_set_rejects_newline_in_core_values(_isolate_home, flag, payload):
+    run(_isolate_home, "init")
+    args = ["set", "p", "--base-url", "https://ok", "--key", "sk"]
+    # Replace whichever field is under test with the malicious payload.
+    if flag == "--base-url":
+        args[3] = payload
+    else:
+        args[5] = payload
+    result = run(_isolate_home, *args, check=False)
+
+    assert result.returncode != 0
+    assert "may not contain newline" in result.stderr
+    assert not (_isolate_home / ".config/ccs/providers/p.conf").exists()
+
+
+@pytest.mark.parametrize("ctrl", ["a\nb", "a\tb", "a\rb"])
+def test_set_rejects_control_chars_in_env_value(_isolate_home, ctrl):
+    run(_isolate_home, "init")
+    result = run(
+        _isolate_home,
+        "set",
+        "p",
+        "--base-url",
+        "https://ok",
+        "--key",
+        "sk",
+        "-e",
+        f"ANTHROPIC_MODEL={ctrl}",
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "may not contain newline, tab, or carriage return" in result.stderr
+
+
+def test_empty_home_without_overrides_refuses(_isolate_home):
+    result = run(_isolate_home, "ls", check=False, env_extra={"HOME": ""})
+
+    assert result.returncode != 0
+    assert "HOME is empty" in result.stderr
+
+
+def test_empty_home_with_overrides_works(_isolate_home, tmp_path):
+    cfg = tmp_path / "cfg"
+    settings_file = tmp_path / "settings.json"
+    result = run(
+        _isolate_home,
+        "init",
+        env_extra={
+            "HOME": "",
+            "CCS_DIR": str(cfg),
+            "CLAUDE_SETTINGS_FILE": str(settings_file),
+        },
+    )
+
+    assert result.returncode == 0
+    assert cfg.is_dir()
+
+
+def test_isolation_ignores_inherited_ccs_dir_override(_isolate_home, tmp_path, monkeypatch):
+    # A CCS_DIR/CLAUDE_SETTINGS_FILE exported in the surrounding shell must not
+    # redirect writes away from the isolated HOME. The autouse _isolate_home
+    # fixture delenv's them and run() strips them again; simulate an inherited
+    # export via os.environ (not env_extra) to pin that both layers hold.
+    stray = tmp_path / "stray-config"
+    stray_settings = tmp_path / "stray-settings.json"
+    monkeypatch.setenv("CCS_DIR", str(stray))
+    monkeypatch.setenv("CLAUDE_SETTINGS_FILE", str(stray_settings))
+
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "k", "--base-url", "https://k.example", "--key", "sk-X")
+    run(_isolate_home, "use", "k", "--no-verify")
+
+    assert (_isolate_home / ".config/ccs").is_dir()
+    assert (_isolate_home / ".claude/settings.json").is_file()
+    assert not stray.exists()
+    assert not stray_settings.exists()
+
+
+def _jq_free_path(tmp_path: Path) -> str:
+    """Build a PATH with the usual tools but no jq, to exercise the awk writer."""
+    bin_dir = tmp_path / "nojq-bin"
+    bin_dir.mkdir(exist_ok=True)
+    tools = [
+        "sh",
+        "awk",
+        "sed",
+        "grep",
+        "mktemp",
+        "mv",
+        "rm",
+        "cat",
+        "chmod",
+        "mkdir",
+        "dirname",
+        "basename",
+        "wc",
+        "tr",
+        "cut",
+        "expr",
+        "env",
+        "printf",
+        "test",
+        "[",
+    ]
+    import shutil
+
+    for tool in tools:
+        src = shutil.which(tool)
+        if src:
+            (bin_dir / tool).symlink_to(src)
+    return str(bin_dir)
+
+
+def test_awk_fallback_preserves_fields_without_jq(_isolate_home, tmp_path):
+    if not _shutil_which("jq"):
+        pytest.skip("jq not installed; jq path and fallback are identical here")
+    settings_file = _isolate_home / ".claude/settings.json"
+    settings_file.parent.mkdir(parents=True)
+    settings_file.write_text('{"permissions":{"allow":["Bash(*)"]},"env":{"CUSTOM":"x","ANTHROPIC_API_KEY":"old"}}')
+
+    nojq = _jq_free_path(tmp_path)
+    run(_isolate_home, "init", env_extra={"PATH": nojq})
+    run(_isolate_home, "set", "k", "--base-url", "https://k.example", "--key", "sk-X", env_extra={"PATH": nojq})
+    run(_isolate_home, "use", "k", "--no-verify", env_extra={"PATH": nojq})
+
+    data = settings(_isolate_home)
+    assert data["permissions"] == {"allow": ["Bash(*)"]}
+    assert data["env"]["CUSTOM"] == "x"
+    assert data["env"]["ANTHROPIC_BASE_URL"] == "https://k.example"
+    assert data["env"]["ANTHROPIC_API_KEY"] == "sk-X"
+
+
+def _shutil_which(name: str):
+    import shutil
+
+    return shutil.which(name)

@@ -4,6 +4,19 @@ set -u
 umask 077
 
 CCS_VERSION=0.7.0
+
+# An empty HOME would make the HOME-derived defaults collapse to filesystem-root
+# paths (/.config/ccs, /.claude/settings.json). set -u catches an *unset* HOME
+# but not an empty one, so guard explicitly unless the path is fully overridden.
+if [ -z "${CCS_DIR:-}" ] && [ -z "${HOME:-}" ]; then
+    printf 'Error: HOME is empty; set HOME or CCS_DIR\n' >&2
+    exit 1
+fi
+if [ -z "${CLAUDE_SETTINGS_FILE:-}" ] && [ -z "${HOME:-}" ]; then
+    printf 'Error: HOME is empty; set HOME or CLAUDE_SETTINGS_FILE\n' >&2
+    exit 1
+fi
+
 CCS_DIR=${CCS_DIR:-"$HOME/.config/ccs"}
 PROVIDERS_DIR=$CCS_DIR/providers
 ACTIVE_FILE=$CCS_DIR/active
@@ -19,6 +32,11 @@ VERIFY_PROBE_MODEL=${CCS_VERIFY_PROBE_MODEL:-claude-sonnet-4-6}
 PROVIDER_ENV_KEYS="ANTHROPIC_BASE_URL ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL_NAME ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES ANTHROPIC_DEFAULT_SONNET_MODEL_NAME ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES ANTHROPIC_CUSTOM_MODEL_OPTION ANTHROPIC_CUSTOM_MODEL_OPTION_NAME ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION ANTHROPIC_CUSTOM_MODEL_OPTION_SUPPORTED_CAPABILITIES CLAUDE_CODE_SUBAGENT_MODEL CLAUDE_CODE_EFFORT_LEVEL"
 MANAGED_ENV_KEYS="$PROVIDER_ENV_KEYS $ENV_API_KEY $ENV_AUTH_TOKEN"
 FATAL_PROVIDER_ERROR_TYPES="authentication_error invalid_api_key model_not_found not_found_error permission_error"
+
+TAB=$(printf '\t')
+CR=$(printf '\r')
+NL='
+'
 
 RESET=$(printf '\033[0m')
 SELECTED=$(printf '\033[1;30;46m')
@@ -45,6 +63,14 @@ chmod_private_dir() {
 
 chmod_private_file() {
     chmod 600 "$1" 2>/dev/null || warn "could not set permissions 600 on $1"
+}
+
+# Single chokepoint for temp-file creation. The dir-prefixed template works on
+# GNU coreutils, BSD/macOS, and modern busybox; centralizing keeps the form in
+# one place should an older mktemp ever need a different invocation. Callers
+# keep their own "|| exit 1" / "|| return 1" so failure handling stays local.
+make_temp() {
+    mktemp "${TMPDIR:-/tmp}/ccs-$1.XXXXXX"
 }
 
 usage() {
@@ -130,15 +156,20 @@ require_provider_name() {
     valid_provider_name "$name" || die "provider name may only contain letters, numbers, dot, underscore, and dash"
 }
 
-is_allowed_env_key() {
-    case " $PROVIDER_ENV_KEYS " in
-        *" $1 "*) return 0 ;;
-        *) return 1 ;;
+# Reject values containing a newline, tab, or carriage return. The provider
+# .conf format is line-based (KEY=VALUE\n) and the settings env intermediate is
+# tab-delimited, so such bytes would corrupt the round-trip or inject extra
+# KEY=VALUE lines. $2 names the field for the error message.
+reject_control_chars() {
+    case "$1" in
+        *"$NL"*|*"$TAB"*|*"$CR"*)
+            die "${2:-value} may not contain newline, tab, or carriage return"
+            ;;
     esac
 }
 
-is_managed_env_key() {
-    case " $MANAGED_ENV_KEYS " in
+is_allowed_env_key() {
+    case " $PROVIDER_ENV_KEYS " in
         *" $1 "*) return 0 ;;
         *) return 1 ;;
     esac
@@ -198,14 +229,22 @@ provider_env_to_file() {
     ' "$file" >"$out"
 }
 
-env_file_set() {
+env_file_write() {
     file=$1
     key=$2
-    value=$3
-    tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-env.XXXXXX") || exit 1
-    awk -v k="$key" 'index($0, k "=") != 1 { print }' "$file" >"$tmp"
-    if [ -n "$value" ]; then
-        printf '%s=%s\n' "$key" "$value" >>"$tmp"
+    tmp=$(make_temp env) || exit 1
+    if [ -f "$file" ]; then
+        awk -v k="$key" 'index($0, k "=") != 1 { print }' "$file" >"$tmp" || {
+            rm -f "$tmp"
+            die "cannot rewrite $file"
+        }
+    fi
+    if [ "$#" -gt 2 ]; then
+        value=$3
+        if [ -n "$value" ]; then
+            reject_control_chars "$value" "$key"
+            printf '%s=%s\n' "$key" "$value" >>"$tmp"
+        fi
     fi
     mv "$tmp" "$file" || {
         rm -f "$tmp"
@@ -213,31 +252,14 @@ env_file_set() {
     }
 }
 
-env_file_unset() {
-    file=$1
-    key=$2
-    tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-env.XXXXXX") || exit 1
-    awk -v k="$key" 'index($0, k "=") != 1 { print }' "$file" >"$tmp"
-    mv "$tmp" "$file" || {
-        rm -f "$tmp"
-        die "cannot update $file"
-    }
-}
-
-env_file_get() {
-    file=$1
-    key=$2
-    [ -f "$file" ] || return 0
-    awk -v k="$key" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }' "$file"
-}
-
 write_provider() {
     name=$1
     auth=$2
     key=$3
     env_file=$4
+    reject_control_chars "$key" "key"
     file=$(provider_file "$name")
-    tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-provider.XXXXXX") || exit 1
+    tmp=$(make_temp provider) || exit 1
     {
         printf 'auth=%s\n' "$auth"
         printf 'key=%s\n' "$key"
@@ -257,7 +279,10 @@ write_provider() {
                 }
             }
         ' "$env_file"
-    } >"$tmp"
+    } >"$tmp" || {
+        rm -f "$tmp"
+        die "cannot write provider file $file"
+    }
     chmod_private_file "$tmp"
     mv "$tmp" "$file" || {
         rm -f "$tmp"
@@ -265,15 +290,21 @@ write_provider() {
     }
 }
 
+# json_quote and curl_config_quote accumulate the whole input across records
+# (awk splits on newline, so an embedded newline never reaches $0 and must be
+# rebuilt) before escaping. This makes the "\n" branch reachable instead of
+# silently dropping embedded newlines.
 json_quote() {
     awk '
         BEGIN {
             ORS = ""
             for (n = 1; n < 32; n++) ctrl[sprintf("%c", n)] = n
         }
-        {
-            for (i = 1; i <= length($0); i++) {
-                c = substr($0, i, 1)
+        NR > 1 { s = s "\n" }
+        { s = s $0 }
+        END {
+            for (i = 1; i <= length(s); i++) {
+                c = substr(s, i, 1)
                 if (c == "\\") printf "\\\\"
                 else if (c == "\"") printf "\\\""
                 else if (c == "\b") printf "\\b"
@@ -288,14 +319,20 @@ json_quote() {
     '
 }
 
+# Deliberately a subset of json_quote: curl config files use C-style backslash
+# escapes and do NOT interpret \b \f or \uXXXX, so those must pass through
+# literally rather than be JSON-escaped. Do not merge with json_quote.
 curl_config_quote() {
     awk '
         BEGIN { ORS = "" }
-        {
-            for (i = 1; i <= length($0); i++) {
-                c = substr($0, i, 1)
+        NR > 1 { s = s "\n" }
+        { s = s $0 }
+        END {
+            for (i = 1; i <= length(s); i++) {
+                c = substr(s, i, 1)
                 if (c == "\\") printf "\\\\"
                 else if (c == "\"") printf "\\\""
+                else if (c == "\n") printf "\\n"
                 else if (c == "\t") printf "\\t"
                 else if (c == "\r") printf "\\r"
                 else printf "%s", c
@@ -357,7 +394,10 @@ settings_parse() {
             }
             return i
         }
-        function unquote(raw,    i, c, out, esc, u) {
+        function hexval(ch) {
+            return index("0123456789abcdef", tolower(ch)) - 1
+        }
+        function unquote(raw,    i, c, out, esc, u, hi, lo, cp) {
             out = ""
             i = 2
             while (i < length(raw)) {
@@ -373,7 +413,16 @@ settings_parse() {
                     else if (c == "t") out = out "\t"
                     else if (c == "u") {
                         u = substr(raw, i + 1, 4)
-                        out = out "\\u" u
+                        # Decode ASCII-range escapes ( -) to the real
+                        # character so an escaped key like ANTHROPIC_API_KEY is
+                        # recognized as managed. Non-ASCII escapes are kept
+                        # literal (they are never managed key names).
+                        if (u ~ /^00[0-7][0-9A-Fa-f]$/) {
+                            cp = hexval(substr(u, 3, 1)) * 16 + hexval(substr(u, 4, 1))
+                            out = out sprintf("%c", cp)
+                        } else {
+                            out = out "\\u" u
+                        }
                         i += 4
                     } else out = out c
                 } else out = out c
@@ -479,7 +528,7 @@ env_file_to_json() {
 write_settings_json_with_jq() {
     env_file=$1
     out_file=$2
-    env_json_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-env-json.XXXXXX") || exit 1
+    env_json_tmp=$(make_temp env-json) || exit 1
     env_file_to_json "$env_file" >"$env_json_tmp" || {
         rm -f "$env_json_tmp"
         return 1
@@ -487,9 +536,9 @@ write_settings_json_with_jq() {
     if [ -f "$SETTINGS_FILE" ]; then
         jq --slurpfile ccs_env "$env_json_tmp" \
             'if type == "object" then del(.apiKeyHelper) | .env = $ccs_env[0] else {"env": $ccs_env[0]} end' \
-            "$SETTINGS_FILE" >"$out_file" 2>/dev/null
+            "$SETTINGS_FILE" >"$out_file"
     else
-        jq --slurpfile ccs_env "$env_json_tmp" -n '{"env": $ccs_env[0]}' >"$out_file" 2>/dev/null
+        jq --slurpfile ccs_env "$env_json_tmp" -n '{"env": $ccs_env[0]}' >"$out_file"
     fi
     rc=$?
     rm -f "$env_json_tmp"
@@ -504,43 +553,17 @@ write_settings_json() {
         die "settings path exists but is not a regular file: $SETTINGS_FILE"
     fi
     mkdir -p "$settings_dir" || die "cannot create settings directory"
-    tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-settings.XXXXXX") || exit 1
-    if command -v jq >/dev/null 2>&1 && write_settings_json_with_jq "$env_file" "$tmp"; then
-        :
+    tmp=$(make_temp settings) || exit 1
+    if command -v jq >/dev/null 2>&1; then
+        if ! write_settings_json_with_jq "$env_file" "$tmp"; then
+            # jq is installed but failed on this settings.json. The awk fallback
+            # is more lenient and may silently drop top-level fields it cannot
+            # parse, so warn before falling back rather than losing data quietly.
+            [ ! -f "$SETTINGS_FILE" ] || warn "jq could not process $SETTINGS_FILE; falling back to the POSIX writer (some top-level fields may be dropped)"
+            write_settings_json_awk "$other_file" "$env_file" "$tmp"
+        fi
     else
-        {
-            printf '{\n'
-            first=1
-            while IFS= read -r field; do
-                [ -n "$field" ] || continue
-                if [ "$first" -eq 0 ]; then
-                    printf ',\n'
-                fi
-                printf '  %s' "$field"
-                first=0
-            done <"$other_file"
-            if [ "$first" -eq 0 ]; then
-                printf ',\n'
-            fi
-            printf '  "env": {\n'
-            env_first=1
-            tab=$(printf '\t')
-            while IFS="$tab" read -r key raw_value; do
-                [ -n "$key" ] || continue
-                if [ "$env_first" -eq 0 ]; then
-                    printf ',\n'
-                fi
-                printf '    "'
-                printf '%s' "$key" | json_quote
-                printf '": %s' "$raw_value"
-                env_first=0
-            done <"$env_file"
-            printf '\n  }\n'
-            printf '}\n'
-        } >"$tmp" || {
-            rm -f "$tmp"
-            die "cannot write temporary settings file"
-        }
+        write_settings_json_awk "$other_file" "$env_file" "$tmp"
     fi
     chmod_private_file "$tmp"
     mv "$tmp" "$SETTINGS_FILE" || {
@@ -549,11 +572,53 @@ write_settings_json() {
     }
 }
 
+# POSIX fallback writer used when jq is absent or fails. Emits non-env
+# top-level fields verbatim (already minified by settings_parse) plus the
+# managed env object. The caller chmods and commits $tmp.
+write_settings_json_awk() {
+    other_file=$1
+    env_file=$2
+    tmp=$3
+    {
+        printf '{\n'
+        first=1
+        while IFS= read -r field; do
+            [ -n "$field" ] || continue
+            if [ "$first" -eq 0 ]; then
+                printf ',\n'
+            fi
+            printf '  %s' "$field"
+            first=0
+        done <"$other_file"
+        if [ "$first" -eq 0 ]; then
+            printf ',\n'
+        fi
+        printf '  "env": {\n'
+        env_first=1
+        tab=$(printf '\t')
+        while IFS="$tab" read -r key raw_value; do
+            [ -n "$key" ] || continue
+            if [ "$env_first" -eq 0 ]; then
+                printf ',\n'
+            fi
+            printf '    "'
+            printf '%s' "$key" | json_quote
+            printf '": %s' "$raw_value"
+            env_first=0
+        done <"$env_file"
+        printf '\n  }\n'
+        printf '}\n'
+    } >"$tmp" || {
+        rm -f "$tmp"
+        die "cannot write temporary settings file"
+    }
+}
+
 settings_env_set() {
     file=$1
     key=$2
     value=$3
-    tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-env.XXXXXX") || exit 1
+    tmp=$(make_temp env) || exit 1
     awk -F '\t' -v k="$key" '$1 != k { print }' "$file" >"$tmp" || {
         rm -f "$tmp"
         die "cannot update temporary env file"
@@ -574,6 +639,10 @@ settings_env_set() {
     }
 }
 
+# apply_provider and clear_provider_env run their temp-file bookkeeping in a
+# subshell so their cleanup trap is isolated. Setting a trap in the function
+# body directly would overwrite a caller's EXIT/INT trap (e.g. cmd_set's), so
+# the subshell keeps trap scope local; `|| exit $?` propagates die's failure.
 apply_provider() {
     name=$1
     provider_path=$(provider_file "$name")
@@ -584,40 +653,40 @@ apply_provider() {
     provider_key=$(conf_get "$provider_path" key)
     [ -n "$provider_key" ] || die "provider '$name' has empty key"
 
-    env_tmp=
-    other_tmp=
-    provider_env_tmp=
-    trap 'rm -f "$env_tmp" "$other_tmp" "$provider_env_tmp"' HUP INT TERM EXIT
-    env_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-env.XXXXXX") || exit 1
-    other_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-other.XXXXXX") || exit 1
-    provider_env_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-provider-env.XXXXXX") || exit 1
+    (
+        env_tmp=
+        other_tmp=
+        provider_env_tmp=
+        trap 'rm -f "$env_tmp" "$other_tmp" "$provider_env_tmp"' HUP INT TERM EXIT
+        env_tmp=$(make_temp env) || exit 1
+        other_tmp=$(make_temp other) || exit 1
+        provider_env_tmp=$(make_temp provider-env) || exit 1
 
-    settings_parse other "$SETTINGS_FILE" >"$other_tmp"
-    settings_parse env "$SETTINGS_FILE" >"$env_tmp"
+        settings_parse other "$SETTINGS_FILE" >"$other_tmp" || die "cannot parse $SETTINGS_FILE"
+        settings_parse env "$SETTINGS_FILE" >"$env_tmp" || die "cannot parse $SETTINGS_FILE"
 
-    provider_env_to_file "$provider_path" "$provider_env_tmp"
-    while IFS= read -r line; do
-        [ -n "$line" ] || continue
-        settings_env_set "$env_tmp" "${line%%=*}" "${line#*=}"
-    done <"$provider_env_tmp"
+        provider_env_to_file "$provider_path" "$provider_env_tmp"
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            settings_env_set "$env_tmp" "${line%%=*}" "${line#*=}"
+        done <"$provider_env_tmp"
 
-    settings_env_set "$env_tmp" "$(secret_env_name "$auth")" "$provider_key"
-    write_settings_json "$other_tmp" "$env_tmp"
-    rm -f "$env_tmp" "$other_tmp" "$provider_env_tmp"
-    trap - HUP INT TERM EXIT
+        settings_env_set "$env_tmp" "$(secret_env_name "$auth")" "$provider_key"
+        write_settings_json "$other_tmp" "$env_tmp"
+    ) || exit $?
 }
 
 clear_provider_env() {
-    env_tmp=
-    other_tmp=
-    trap 'rm -f "$env_tmp" "$other_tmp"' HUP INT TERM EXIT
-    env_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-env.XXXXXX") || exit 1
-    other_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-other.XXXXXX") || exit 1
-    settings_parse other "$SETTINGS_FILE" >"$other_tmp"
-    settings_parse env "$SETTINGS_FILE" >"$env_tmp"
-    write_settings_json "$other_tmp" "$env_tmp"
-    rm -f "$env_tmp" "$other_tmp"
-    trap - HUP INT TERM EXIT
+    (
+        env_tmp=
+        other_tmp=
+        trap 'rm -f "$env_tmp" "$other_tmp"' HUP INT TERM EXIT
+        env_tmp=$(make_temp env) || exit 1
+        other_tmp=$(make_temp other) || exit 1
+        settings_parse other "$SETTINGS_FILE" >"$other_tmp" || die "cannot parse $SETTINGS_FILE"
+        settings_parse env "$SETTINGS_FILE" >"$env_tmp" || die "cannot parse $SETTINGS_FILE"
+        write_settings_json "$other_tmp" "$env_tmp"
+    ) || exit $?
 }
 
 prompt_required() {
@@ -734,32 +803,35 @@ active_name() {
     [ -f "$ACTIVE_FILE" ] && sed -n '1p' "$ACTIVE_FILE"
 }
 
+# set_active returns non-zero (rather than die) so callers can report a
+# settings/active inconsistency when the pointer update fails after settings
+# were already written.
 set_active() {
     name=$1
-    mkdir -p "$CCS_DIR" || die "cannot create $CCS_DIR"
-    tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-active.XXXXXX") || exit 1
+    mkdir -p "$CCS_DIR" || return 1
+    tmp=$(make_temp active) || return 1
     printf '%s\n' "$name" >"$tmp" || {
         rm -f "$tmp"
-        die "cannot write active provider"
+        return 1
     }
     chmod_private_file "$tmp"
     mv "$tmp" "$ACTIVE_FILE" || {
         rm -f "$tmp"
-        die "cannot update active provider"
+        return 1
     }
 }
 
 clear_active() {
-    mkdir -p "$CCS_DIR" || die "cannot create $CCS_DIR"
-    tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-active.XXXXXX") || exit 1
+    mkdir -p "$CCS_DIR" || return 1
+    tmp=$(make_temp active) || return 1
     : >"$tmp" || {
         rm -f "$tmp"
-        die "cannot write active provider"
+        return 1
     }
     chmod_private_file "$tmp"
     mv "$tmp" "$ACTIVE_FILE" || {
         rm -f "$tmp"
-        die "cannot update active provider"
+        return 1
     }
 }
 
@@ -793,8 +865,8 @@ cmd_set() {
     env_unsets=
     env_tmp=
     trap 'rm -f "$env_updates" "$env_unsets" "$env_tmp"' HUP INT TERM EXIT
-    env_updates=$(mktemp "${TMPDIR:-/tmp}/ccs-env-updates.XXXXXX") || exit 1
-    env_unsets=$(mktemp "${TMPDIR:-/tmp}/ccs-env-unsets.XXXXXX") || exit 1
+    env_updates=$(make_temp env-updates) || exit 1
+    env_unsets=$(make_temp env-unsets) || exit 1
     : >"$env_updates"
     : >"$env_unsets"
 
@@ -866,6 +938,7 @@ cmd_set() {
                 env_key=${2%%=*}
                 env_value=${2#*=}
                 validate_env_key "$env_key"
+                reject_control_chars "$env_value" "$env_key"
                 printf '%s=%s\n' "$env_key" "$env_value" >>"$env_updates"
                 options_provided=1
                 shift 2
@@ -897,16 +970,16 @@ cmd_set() {
     file=$(provider_file "$name")
     created=0
     [ -f "$file" ] || created=1
-    env_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-env.XXXXXX") || exit 1
+    env_tmp=$(make_temp env) || exit 1
     provider_env_to_file "$file" "$env_tmp"
     current_auth=$(conf_get "$file" auth)
     [ -n "$current_auth" ] || current_auth=$AUTH_API_KEY
     current_key=$(conf_get "$file" key)
-    current_base_url=$(env_file_get "$env_tmp" ANTHROPIC_BASE_URL)
-    current_model=$(env_file_get "$env_tmp" ANTHROPIC_MODEL)
-    current_opus_model=$(env_file_get "$env_tmp" ANTHROPIC_DEFAULT_OPUS_MODEL)
-    current_sonnet_model=$(env_file_get "$env_tmp" ANTHROPIC_DEFAULT_SONNET_MODEL)
-    current_haiku_model=$(env_file_get "$env_tmp" ANTHROPIC_DEFAULT_HAIKU_MODEL)
+    current_base_url=$(conf_get "$env_tmp" ANTHROPIC_BASE_URL)
+    current_model=$(conf_get "$env_tmp" ANTHROPIC_MODEL)
+    current_opus_model=$(conf_get "$env_tmp" ANTHROPIC_DEFAULT_OPUS_MODEL)
+    current_sonnet_model=$(conf_get "$env_tmp" ANTHROPIC_DEFAULT_SONNET_MODEL)
+    current_haiku_model=$(conf_get "$env_tmp" ANTHROPIC_DEFAULT_HAIKU_MODEL)
 
     auth=$current_auth
     [ -n "$auth_flag" ] && auth=$auth_flag
@@ -952,33 +1025,33 @@ cmd_set() {
     [ -n "$current_key" ] || die "--key is required when creating a provider"
 
     if [ -n "$base_url" ]; then
-        env_file_set "$env_tmp" ANTHROPIC_BASE_URL "$base_url"
+        env_file_write "$env_tmp" ANTHROPIC_BASE_URL "$base_url"
     fi
     while IFS= read -r env_key; do
         [ -n "$env_key" ] || continue
-        env_file_unset "$env_tmp" "$env_key"
+        env_file_write "$env_tmp" "$env_key"
     done <"$env_unsets"
     if [ "$unset_model" -eq 1 ]; then
-        env_file_unset "$env_tmp" ANTHROPIC_MODEL
+        env_file_write "$env_tmp" ANTHROPIC_MODEL
     fi
     if [ -n "$model" ]; then
-        env_file_set "$env_tmp" ANTHROPIC_MODEL "$model"
+        env_file_write "$env_tmp" ANTHROPIC_MODEL "$model"
     fi
     if [ -n "$opus_model" ]; then
-        env_file_set "$env_tmp" ANTHROPIC_DEFAULT_OPUS_MODEL "$opus_model"
+        env_file_write "$env_tmp" ANTHROPIC_DEFAULT_OPUS_MODEL "$opus_model"
     fi
     if [ -n "$sonnet_model" ]; then
-        env_file_set "$env_tmp" ANTHROPIC_DEFAULT_SONNET_MODEL "$sonnet_model"
+        env_file_write "$env_tmp" ANTHROPIC_DEFAULT_SONNET_MODEL "$sonnet_model"
     fi
     if [ -n "$haiku_model" ]; then
-        env_file_set "$env_tmp" ANTHROPIC_DEFAULT_HAIKU_MODEL "$haiku_model"
+        env_file_write "$env_tmp" ANTHROPIC_DEFAULT_HAIKU_MODEL "$haiku_model"
     fi
     while IFS= read -r line; do
         [ -n "$line" ] || continue
-        env_file_set "$env_tmp" "${line%%=*}" "${line#*=}"
+        env_file_write "$env_tmp" "${line%%=*}" "${line#*=}"
     done <"$env_updates"
 
-    [ -n "$(env_file_get "$env_tmp" ANTHROPIC_BASE_URL)" ] || die "ANTHROPIC_BASE_URL is required"
+    [ -n "$(conf_get "$env_tmp" ANTHROPIC_BASE_URL)" ] || die "ANTHROPIC_BASE_URL is required"
 
     write_provider "$name" "$auth" "$current_key" "$env_tmp"
     if [ "$(active_name)" = "$name" ]; then
@@ -1083,9 +1156,17 @@ is_loopback_http_url() {
     case "$authority" in
         localhost|localhost:*) return 0 ;;
         \[::1\]|\[::1\]:*) return 0 ;;
+        # IPv4-mapped IPv6 loopback, e.g. [::ffff:127.0.0.1]; the embedded
+        # dotted address is range-checked by the 127.x.x.x branch below.
+        \[::ffff:127.*\]|\[::ffff:127.*\]:*)
+            mapped=${authority#\[::ffff:}
+            host=${mapped%%\]*}
+            ;;
+        *)
+            host=${authority%%:*}
+            ;;
     esac
 
-    host=${authority%%:*}
     case "$host" in
         127.[0-9]*.[0-9]*.[0-9]*)
             first=${host%%.*}
@@ -1101,7 +1182,10 @@ is_loopback_http_url() {
                 case "$octet" in
                     ''|*[!0-9]*) return 1 ;;
                 esac
-                [ "$octet" -le 255 ] || return 1
+                case "$octet" in
+                    [0-9]|[0-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5]) ;;
+                    *) return 1 ;;
+                esac
             done
             return 0
             ;;
@@ -1127,11 +1211,14 @@ verify_request() {
         err_tmp=
         hdr_tmp=
         trap 'rm -f "$body_tmp" "$err_tmp" "$hdr_tmp"' HUP INT TERM EXIT
-        body_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-body.XXXXXX") || exit 1
-        err_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-curl.XXXXXX") || exit 1
-        hdr_tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-hdr.XXXXXX") || exit 1
+        body_tmp=$(make_temp body) || exit 1
+        err_tmp=$(make_temp curl) || exit 1
+        hdr_tmp=$(make_temp hdr) || exit 1
         chmod_private_file "$hdr_tmp"
-        model_json=$(printf '%s' "$model" | json_quote)
+        if ! model_json=$(printf '%s' "$model" | json_quote) || [ -z "$model_json" ]; then
+            printf 'failed to encode verify model name\n'
+            exit 1
+        fi
         body='{"model":"'"$model_json"'","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}'
         url=${base_url%/}/v1/messages
         printf 'verifying against %s\n' "$url" >&2
@@ -1139,18 +1226,15 @@ verify_request() {
             printf 'warning: sending provider secret over plain HTTP to %s\n' "$url" >&2
         fi
         if [ "$auth" = "$AUTH_TOKEN" ]; then
-            {
-                printf 'header = "Authorization: Bearer '
-                printf '%s' "$key" | curl_config_quote
-                printf '"\n'
-            } >"$hdr_tmp"
+            hdr_prefix='Authorization: Bearer '
         else
-            {
-                printf 'header = "x-api-key: '
-                printf '%s' "$key" | curl_config_quote
-                printf '"\n'
-            } >"$hdr_tmp"
+            hdr_prefix='x-api-key: '
         fi
+        {
+            printf 'header = "%s' "$hdr_prefix"
+            printf '%s' "$key" | curl_config_quote
+            printf '"\n'
+        } >"$hdr_tmp"
         status=$(curl -sS -m "$VERIFY_TIMEOUT" -o "$body_tmp" -w '%{http_code}' \
             -X POST "$url" \
             -H 'anthropic-version: 2023-06-01' \
@@ -1416,8 +1500,17 @@ cmd_use() {
         use_note "verify: $msg"
     fi
 
+    # settings.json is the source of truth Claude Code reads; the active file is
+    # ccs's own bookkeeping. Write settings first so a failure here leaves the
+    # old provider fully intact. If the active-pointer update then fails, the
+    # new provider is already live, so surface the inconsistency loudly instead
+    # of dying silently.
     apply_provider "$name"
-    set_active "$name"
+    if ! set_active "$name"; then
+        warn "settings.json now uses '$name' but the active marker could not be updated"
+        warn "re-run: ccs use $name"
+        exit 1
+    fi
     use_note "switched -> $name"
     use_note "base_url: $base_url"
     warn_preferred_auth_token "$name" "$auth" "$base_url"
@@ -1535,8 +1628,16 @@ cmd_rm() {
     rm_file=$(provider_file "$rm_name")
     [ -f "$rm_file" ] || die "no such provider: '$rm_name'"
     if [ "$(active_name)" = "$rm_name" ]; then
+        # Strip managed env from settings.json first (so Claude Code stops using
+        # this provider), then clear the active marker. If clearing the marker
+        # fails, the .conf is deliberately left in place so state stays
+        # self-consistent and recoverable rather than half-removed.
         clear_provider_env
-        clear_active
+        if ! clear_active; then
+            warn "settings.json was cleared but the active marker could not be updated"
+            warn "re-run: ccs rm $rm_name"
+            exit 1
+        fi
     fi
     rm -f "$rm_file" || die "cannot remove provider file: $rm_file"
     printf 'removed %s\n' "$rm_name"

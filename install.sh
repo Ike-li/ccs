@@ -17,6 +17,12 @@ need() {
 
 need curl
 
+# Trust boundary: this installer resolves curl, the hashing tool, and install/cp
+# through $PATH, so it can only be as trustworthy as $PATH itself. A poisoned
+# PATH defeats any POSIX-sh installer (even printf/test could be shadowed). Run
+# it with a trusted PATH, or prefer `brew install Ike-li/tap/ccs`. The checksum
+# step below is mandatory: if no hashing tool is found it aborts rather than
+# installing unverified bytes.
 sha256_file() {
     if command -v sha256sum >/dev/null 2>&1; then
         sha256sum "$1" | awk '{print $1}'
@@ -34,8 +40,15 @@ mkdir -p "$install_dir"
 tmp=$(mktemp "${TMPDIR:-/tmp}/ccs-install.XXXXXX") || exit 1
 trap 'rm -f "$tmp"' HUP INT TERM EXIT
 
+# A set-but-empty CCS_INSTALL_SHA256 still falls back to the pinned default via
+# :- above, so the checksum can never be silently blanked. Guard only the
+# computed side: a hasher that returns nothing must abort, not compare ""=="".
 curl -fsSL "$raw_base/bin/ccs" -o "$tmp"
 actual_sha256=$(sha256_file "$tmp")
+if [ -z "$actual_sha256" ]; then
+    printf 'Error: could not compute checksum of downloaded bin/ccs\n' >&2
+    exit 1
+fi
 if [ "$actual_sha256" != "$expected_sha256" ]; then
     printf 'Error: checksum mismatch for %s/bin/ccs\n' "$raw_base" >&2
     printf 'Expected: %s\n' "$expected_sha256" >&2
