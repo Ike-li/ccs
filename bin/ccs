@@ -26,6 +26,10 @@ AUTH_API_KEY=api_key
 AUTH_TOKEN=auth_token
 ENV_API_KEY=ANTHROPIC_API_KEY
 ENV_AUTH_TOKEN=ANTHROPIC_AUTH_TOKEN
+# Built-in pseudo provider: `ccs use official` removes the managed provider
+# env from settings.json so Claude Code falls back to its own claude.ai
+# subscription login (OAuth). It has no .conf file and the name is reserved.
+OFFICIAL_NAME=official
 VERIFY_TIMEOUT=${CCS_VERIFY_TIMEOUT:-10}
 VERIFY_PROBE_MODEL=${CCS_VERIFY_PROBE_MODEL:-claude-sonnet-4-6}
 
@@ -84,6 +88,7 @@ Usage:
                  [--unset-model] [-e K=V] [--unset-env K]
   ccs preset <deepseek|openrouter> --key KEY [--name NAME]
   ccs use <name> [--no-verify] [--shell]
+  ccs use official [--shell]
   ccs verify [name]
   ccs doctor
   ccs ls
@@ -94,6 +99,9 @@ Usage:
 Note:
   ccs use rewrites settings.json; jq keeps nested JSON readable when available,
   otherwise the POSIX fallback minifies non-env top-level fields.
+  'official' is built in: it removes the managed provider env so Claude Code
+  uses your claude.ai subscription login instead (run /login once inside
+  Claude Code).
 EOF
 }
 
@@ -966,6 +974,7 @@ cmd_set() {
         name=$(prompt_required "Provider name")
     fi
     require_provider_name "$name"
+    [ "$name" != "$OFFICIAL_NAME" ] || die "'$OFFICIAL_NAME' is reserved for the claude.ai subscription (ccs use $OFFICIAL_NAME)"
 
     file=$(provider_file "$name")
     created=0
@@ -1344,12 +1353,16 @@ cmd_doctor() {
         provider_count=0
         for file in "$PROVIDERS_DIR"/*.conf; do
             [ -e "$file" ] || continue
+            [ "$(basename "$file" .conf)" != "$OFFICIAL_NAME" ] || continue
             provider_count=$((provider_count + 1))
         done
         if [ "$provider_count" -gt 0 ]; then
             doctor_ok "providers configured: $provider_count"
         else
             doctor_warn "no providers configured yet (run: ccs set <name>)"
+        fi
+        if [ -f "$(provider_file "$OFFICIAL_NAME")" ]; then
+            doctor_warn "providers/$OFFICIAL_NAME.conf exists but '$OFFICIAL_NAME' is built in; ccs ignores it (rename the file)"
         fi
     else
         doctor_warn "providers dir is missing: $PROVIDERS_DIR"
@@ -1403,6 +1416,18 @@ cmd_doctor() {
     active=$(active_name)
     if [ -z "$active" ]; then
         doctor_warn "no active provider selected (run: ccs use <name>)"
+    elif [ "$active" = "$OFFICIAL_NAME" ]; then
+        doctor_ok "active provider: $OFFICIAL_NAME (claude.ai subscription)"
+        if [ -f "$SETTINGS_FILE" ] &&
+            grep -Eq '"(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|ANTHROPIC_BASE_URL)"[[:space:]]*:' "$SETTINGS_FILE" 2>/dev/null; then
+            doctor_warn "settings file still contains provider env keys (re-run: ccs use $OFFICIAL_NAME)"
+        fi
+        if [ "${ANTHROPIC_API_KEY+x}" = x ]; then
+            doctor_warn "current shell exports ANTHROPIC_API_KEY; it overrides the claude.ai login"
+        fi
+        if [ "${ANTHROPIC_AUTH_TOKEN+x}" = x ]; then
+            doctor_warn "current shell exports ANTHROPIC_AUTH_TOKEN; it overrides the claude.ai login"
+        fi
     else
         doctor_ok "active provider: $active"
         active_file=$(provider_file "$active")
@@ -1469,6 +1494,33 @@ use_note() {
     fi
 }
 
+# `ccs use official`: no .conf file and nothing to curl-verify -- the
+# subscription credential is Claude Code's own OAuth login, which ccs never
+# touches. Removing the managed provider env from settings.json is exactly
+# what makes Claude Code fall back to it.
+use_official() {
+    clear_provider_env
+    if ! set_active "$OFFICIAL_NAME"; then
+        warn "settings.json no longer pins a provider but the active marker could not be updated"
+        warn "re-run: ccs use $OFFICIAL_NAME"
+        exit 1
+    fi
+    use_note "switched -> $OFFICIAL_NAME (claude.ai subscription)"
+    use_note "Managed provider env removed from settings.json; run /login inside Claude Code if needed."
+    if [ "$use_shell" -eq 1 ]; then
+        print_shell_cleanup
+        use_note "Current shell cleanup commands were printed to stdout."
+    else
+        if [ "${ANTHROPIC_API_KEY+x}" = x ]; then
+            warn "current shell exports ANTHROPIC_API_KEY; unset it or it will override the claude.ai login"
+        fi
+        if [ "${ANTHROPIC_AUTH_TOKEN+x}" = x ]; then
+            warn "current shell exports ANTHROPIC_AUTH_TOKEN; unset it or it will override the claude.ai login"
+        fi
+        use_note "Restart Claude Code session to pick up the change."
+    fi
+}
+
 cmd_use() {
     [ "$#" -ge 1 ] || die "provider name is required"
     name=$1
@@ -1483,6 +1535,11 @@ cmd_use() {
         esac
     done
     require_provider_name "$name"
+    if [ "$name" = "$OFFICIAL_NAME" ]; then
+        [ ! -f "$(provider_file "$name")" ] || warn "ignoring providers/$OFFICIAL_NAME.conf: '$OFFICIAL_NAME' is built in"
+        use_official
+        return 0
+    fi
     file=$(provider_file "$name")
     [ -f "$file" ] || die "no such provider: '$name'"
     auth=$(conf_get "$file" auth)
@@ -1548,14 +1605,21 @@ cmd_ls() {
     ensure_dirs
     active=$(active_name)
 
+    official_url="(claude.ai subscription)"
     name_w=4
     secret_w=10
     url_w=8
+    [ "${#OFFICIAL_NAME}" -gt "$name_w" ] && name_w=${#OFFICIAL_NAME}
+    [ "${#official_url}" -gt "$url_w" ] && url_w=${#official_url}
     found=0
     for file in "$PROVIDERS_DIR"/*.conf; do
         [ -e "$file" ] || continue
-        found=1
         name=$(basename "$file" .conf)
+        # The built-in pseudo provider shadows a same-named .conf; ls hides
+        # the file so the table never shows two "official" rows (doctor
+        # reports the conflict instead).
+        [ "$name" = "$OFFICIAL_NAME" ] && continue
+        found=1
         secret=$(secret_env_name "$(conf_get "$file" auth)")
         base_url=$(conf_get "$file" ANTHROPIC_BASE_URL)
         [ "${#name}" -gt "$name_w" ] && name_w=${#name}
@@ -1563,15 +1627,14 @@ cmd_ls() {
         [ "${#base_url}" -gt "$url_w" ] && url_w=${#base_url}
     done
 
-    if [ "$found" -eq 0 ]; then
-        printf 'No providers yet. Try: ccs init && ccs set\n'
-        return 0
-    fi
-
     printf '%-2s %-*s %-*s %-*s %s\n' "" "$name_w" "Name" "$secret_w" "Secret env" "$url_w" "Base URL" "Key"
+    marker=
+    [ "$OFFICIAL_NAME" = "$active" ] && marker='*'
+    printf '%-2s %-*s %-*s %-*s %s\n' "$marker" "$name_w" "$OFFICIAL_NAME" "$secret_w" "-" "$url_w" "$official_url" "-"
     for file in "$PROVIDERS_DIR"/*.conf; do
         [ -e "$file" ] || continue
         name=$(basename "$file" .conf)
+        [ "$name" = "$OFFICIAL_NAME" ] && continue
         marker=
         [ "$name" = "$active" ] && marker='*'
         auth=$(conf_get "$file" auth)
@@ -1579,6 +1642,9 @@ cmd_ls() {
         base_url=$(conf_get "$file" ANTHROPIC_BASE_URL)
         printf '%-2s %-*s %-*s %-*s %s\n' "$marker" "$name_w" "$name" "$secret_w" "$(secret_env_name "$auth")" "$url_w" "$base_url" "$(masked_key "$key")"
     done
+    if [ "$found" -eq 0 ]; then
+        printf 'No custom providers yet. Try: ccs set <name>\n'
+    fi
 }
 
 cmd_show() {
@@ -1593,6 +1659,13 @@ cmd_show() {
         esac
     done
     require_provider_name "$name"
+    if [ "$name" = "$OFFICIAL_NAME" ]; then
+        printf '%-28s %s\n' name "$OFFICIAL_NAME"
+        [ "$(active_name)" = "$OFFICIAL_NAME" ] && printf '%-28s yes\n' active || printf '%-28s no\n' active
+        printf '%-28s %s\n' type "built-in (claude.ai subscription)"
+        printf '%-28s %s\n' effect "removes managed provider env from settings.json"
+        return 0
+    fi
     file=$(provider_file "$name")
     [ -f "$file" ] || die "no such provider: '$name'"
     auth=$(conf_get "$file" auth)
@@ -1616,6 +1689,10 @@ cmd_current() {
         printf 'No active provider\n'
         return 0
     }
+    if [ "$name" = "$OFFICIAL_NAME" ]; then
+        printf '%s -> claude.ai subscription\n' "$OFFICIAL_NAME"
+        return 0
+    fi
     file=$(provider_file "$name")
     [ -f "$file" ] || die "active provider '$name' is missing"
     printf '%s -> %s\n' "$name" "$(conf_get "$file" ANTHROPIC_BASE_URL)"
@@ -1625,6 +1702,7 @@ cmd_rm() {
     [ "$#" -eq 1 ] || die "provider name is required"
     rm_name=$1
     require_provider_name "$rm_name"
+    [ "$rm_name" != "$OFFICIAL_NAME" ] || die "'$OFFICIAL_NAME' is built in and cannot be removed"
     rm_file=$(provider_file "$rm_name")
     [ -f "$rm_file" ] || die "no such provider: '$rm_name'"
     if [ "$(active_name)" = "$rm_name" ]; then

@@ -185,6 +185,16 @@ eval "$(ccs use deepseek --shell)"
 
 `--shell` still writes `settings.json`, prints cleanup commands to stdout, and sends ordinary status text to stderr.
 
+### Switching back to your claude.ai subscription
+
+`official` is a built-in pseudo provider. It removes the managed provider env from `settings.json`, so Claude Code falls back to its own claude.ai login (OAuth):
+
+```bash
+ccs use official
+```
+
+Log in once inside Claude Code with `/login` if you have not already; switching back to a provider is just `ccs use <name>`. If the current shell still exports `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`, the export overrides the subscription login — `ccs use official` warns about it, and `eval "$(ccs use official --shell)"` cleans it up.
+
 ## Common Commands
 
 | Command | Purpose |
@@ -197,6 +207,7 @@ eval "$(ccs use deepseek --shell)"
 | `ccs preset openrouter --key KEY` | Create the OpenRouter recipe |
 | `ccs use <name>` | Switch active provider and verify first |
 | `ccs use <name> --no-verify` | Switch without a network request |
+| `ccs use official` | Switch back to the claude.ai subscription (clears managed provider env) |
 | `ccs verify [name]` | Verify a provider |
 | `ccs doctor` | Diagnose settings, active provider, dependencies, and shell conflicts |
 | `ccs ls` | List providers |

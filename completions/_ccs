@@ -15,6 +15,10 @@ _ccs() {
     if [[ -d "$providers_dir" ]]; then
         providers=( "${providers_dir}"/*.conf(N:t:r) )
     fi
+    # `official` is the built-in claude.ai subscription pseudo provider: valid
+    # for use/show, never for set/verify/rm.
+    local -a use_targets
+    use_targets=( official "${providers[@]}" )
 
     local -a commands
     commands=(
@@ -76,7 +80,7 @@ _ccs() {
                     _arguments \
                         '--no-verify[Skip verify request]' \
                         '--shell[Print eval-safe cleanup to stdout]' \
-                        ':provider:_values provider $providers'
+                        ':provider:_values provider $use_targets'
                     ;;
                 verify|rm|remove)
                     _describe 'provider' providers
@@ -84,7 +88,7 @@ _ccs() {
                 show)
                     _arguments \
                         '--show-key[Reveal the full key]' \
-                        ':provider:_values provider $providers'
+                        ':provider:_values provider $use_targets'
                     ;;
                 set)
                     _arguments \

@@ -4,6 +4,10 @@ All notable changes to `ccs` are documented here.
 
 ## Unreleased
 
+### Added
+
+- Add the built-in `official` pseudo provider: `ccs use official` removes the managed provider env from `settings.json` so Claude Code falls back to the claude.ai subscription login. `ls`/`current`/`show`/`doctor` render it, shell completions offer it for `use`/`show`, and the name is reserved against `set`/`preset`/`rm`.
+
 ## v0.7.0 - 2026-05-29
 
 ### Added

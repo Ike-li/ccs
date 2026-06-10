@@ -29,6 +29,9 @@ _ccs() {
         done
     fi
     local providers_str="${providers[*]}"
+    # `official` is the built-in claude.ai subscription pseudo provider: valid
+    # for use/show, never for set/verify/rm.
+    local use_targets_str="official ${providers[*]}"
 
     if [ "$cword" -le 1 ]; then
         # shellcheck disable=SC2207
@@ -41,7 +44,7 @@ _ccs() {
         use)
             if [ "$cword" -eq 2 ]; then
                 # shellcheck disable=SC2207
-                COMPREPLY=( $(compgen -W "$providers_str" -- "$cur") )
+                COMPREPLY=( $(compgen -W "$use_targets_str" -- "$cur") )
             else
                 # shellcheck disable=SC2207
                 COMPREPLY=( $(compgen -W "--no-verify --shell" -- "$cur") )
@@ -56,7 +59,7 @@ _ccs() {
         show)
             if [ "$cword" -eq 2 ]; then
                 # shellcheck disable=SC2207
-                COMPREPLY=( $(compgen -W "$providers_str" -- "$cur") )
+                COMPREPLY=( $(compgen -W "$use_targets_str" -- "$cur") )
             else
                 # shellcheck disable=SC2207
                 COMPREPLY=( $(compgen -W "--show-key" -- "$cur") )

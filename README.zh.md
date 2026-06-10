@@ -188,6 +188,16 @@ claude
 
 需要一次性清理所有 ccs 管理的 provider env 时，可以用 `eval "$(ccs use deepseek --shell)"`。`--shell` 会照常写入 `settings.json`，并把需要执行的 `unset ...` 输出到 stdout；普通切换日志会写到 stderr，方便 `eval` 安全执行。也可以直接开一个新终端再启动 Claude Code。
 
+### 切回 claude.ai 订阅
+
+`official` 是内置伪 provider：执行后把 ccs 托管的 provider env 从 `settings.json` 中移除，Claude Code 会回落到自己的 claude.ai 登录（OAuth）：
+
+```bash
+ccs use official
+```
+
+如果还没登录过，在 Claude Code 里执行一次 `/login`；切回三方 provider 直接 `ccs use <name>`。如果当前 shell 还 export 着 `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN`，它们会压过订阅登录——`ccs use official` 会给出警告，也可以用 `eval "$(ccs use official --shell)"` 一并清理。
+
 ## 常用命令
 
 | 命令 | 用途 |
@@ -200,6 +210,7 @@ claude
 | `ccs preset openrouter --key KEY` | 用内置 OpenRouter recipe 创建 provider |
 | `ccs use <name>` | 切换 active provider，默认先 verify |
 | `ccs use <name> --no-verify` | 跳过 verify 直接切换 |
+| `ccs use official` | 切回 claude.ai 订阅（清除托管 provider env） |
 | `ccs verify [name]` | 单独验证 provider |
 | `ccs doctor` | 本地诊断 settings、active provider、依赖和 shell secret 冲突 |
 | `ccs ls` | 列出 providers |

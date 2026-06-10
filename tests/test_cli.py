@@ -1273,3 +1273,171 @@ def _shutil_which(name: str):
     import shutil
 
     return shutil.which(name)
+
+
+# --- built-in `official` pseudo provider (claude.ai subscription) ---
+
+
+def test_use_official_clears_managed_env_and_keeps_the_rest(_isolate_home):
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "kimi", "--base-url", "https://kimi.example", "--key", "sk-FAKE")
+    run(_isolate_home, "use", "kimi", "--no-verify")
+    settings_file = _isolate_home / ".claude/settings.json"
+    data = settings(_isolate_home)
+    data["env"]["DISABLE_COMPACT"] = "1"
+    data["statusLine"] = {"type": "command", "command": "x"}
+    settings_file.write_text(json.dumps(data))
+
+    result = run(_isolate_home, "use", "official")
+
+    data = settings(_isolate_home)
+    assert "switched -> official (claude.ai subscription)" in result.stdout
+    assert "Restart Claude Code session" in result.stdout
+    for key in [*provider_env_keys(), "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]:
+        assert key not in data["env"], key
+    assert data["env"]["DISABLE_COMPACT"] == "1"
+    assert data["statusLine"] == {"type": "command", "command": "x"}
+    assert (_isolate_home / ".config/ccs/active").read_text().strip() == "official"
+
+
+def test_use_official_round_trip_back_to_provider(_isolate_home):
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "kimi", "--base-url", "https://kimi.example", "--key", "sk-FAKE")
+    run(_isolate_home, "use", "official")
+    run(_isolate_home, "use", "kimi", "--no-verify")
+
+    data = settings(_isolate_home)
+    assert data["env"]["ANTHROPIC_BASE_URL"] == "https://kimi.example"
+    assert data["env"]["ANTHROPIC_API_KEY"] == "sk-FAKE"
+    assert (_isolate_home / ".config/ccs/active").read_text().strip() == "kimi"
+
+
+def test_use_official_works_without_existing_settings(_isolate_home):
+    result = run(_isolate_home, "use", "official")
+
+    data = settings(_isolate_home)
+    assert "switched -> official" in result.stdout
+    assert data == {"env": {}}
+    assert (_isolate_home / ".config/ccs/active").read_text().strip() == "official"
+
+
+def test_use_official_warns_about_exported_secrets(_isolate_home):
+    result = run(_isolate_home, "use", "official", env_extra={"ANTHROPIC_API_KEY": "sk-leftover"})
+
+    assert "current shell exports ANTHROPIC_API_KEY" in result.stderr
+    assert "override the claude.ai login" in result.stderr
+
+
+def test_use_official_shell_mode_keeps_stdout_eval_safe(_isolate_home):
+    result = run(_isolate_home, "use", "official", "--shell")
+
+    stdout_lines = [line for line in result.stdout.splitlines() if line.strip()]
+    assert stdout_lines, result.stdout
+    for line in stdout_lines:
+        assert line.startswith("unset "), line
+    assert "switched -> official" in result.stderr
+
+
+def test_use_official_ignores_stray_conf_file(_isolate_home):
+    run(_isolate_home, "init")
+    stray = _isolate_home / ".config/ccs/providers/official.conf"
+    stray.write_text("auth=api_key\nkey=sk-STRAY\nANTHROPIC_BASE_URL=https://stray.example\n")
+
+    result = run(_isolate_home, "use", "official")
+
+    data = settings(_isolate_home)
+    assert "ignoring providers/official.conf" in result.stderr
+    assert "ANTHROPIC_BASE_URL" not in data["env"]
+    assert stray.exists()
+
+
+def test_set_and_preset_reject_official_reserved_name(_isolate_home):
+    run(_isolate_home, "init")
+    set_result = run(_isolate_home, "set", "official", "--base-url", "https://x.example", "--key", "sk-X", check=False)
+    preset_result = run(_isolate_home, "preset", "deepseek", "--key", "sk-X", "--name", "official", check=False)
+
+    assert set_result.returncode != 0
+    assert "reserved" in set_result.stderr
+    assert preset_result.returncode != 0
+    assert "reserved" in preset_result.stderr
+    assert not (_isolate_home / ".config/ccs/providers/official.conf").exists()
+
+
+def test_rm_official_is_rejected(_isolate_home):
+    result = run(_isolate_home, "rm", "official", check=False)
+
+    assert result.returncode != 0
+    assert "built in" in result.stderr
+
+
+def test_show_official_describes_builtin(_isolate_home):
+    run(_isolate_home, "use", "official")
+    result = run(_isolate_home, "show", "official")
+
+    assert "built-in (claude.ai subscription)" in result.stdout
+    assert "active" in result.stdout
+    assert "yes" in result.stdout
+
+
+def test_current_and_ls_render_official(_isolate_home):
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "kimi", "--base-url", "https://kimi.example", "--key", "sk-FAKE")
+    run(_isolate_home, "use", "official")
+
+    current = run(_isolate_home, "current").stdout
+    listing = run(_isolate_home, "ls").stdout
+    assert current.strip() == "official -> claude.ai subscription"
+    assert "*  official" in listing
+    assert "(claude.ai subscription)" in listing
+    assert "kimi" in listing
+
+
+def test_ls_without_custom_providers_still_lists_official(_isolate_home):
+    listing = run(_isolate_home, "ls").stdout
+
+    assert "official" in listing
+    assert "(claude.ai subscription)" in listing
+    assert "No custom providers yet" in listing
+
+
+def test_doctor_with_official_active_is_clean_and_flags_leftovers(_isolate_home):
+    run(_isolate_home, "use", "official")
+    clean = run(_isolate_home, "doctor")
+    assert "active provider: official (claude.ai subscription)" in clean.stdout
+    assert "summary: 0 failure(s)" in clean.stdout
+
+    settings_file = _isolate_home / ".claude/settings.json"
+    data = settings(_isolate_home)
+    data["env"]["ANTHROPIC_BASE_URL"] = "https://stale.example"
+    settings_file.write_text(json.dumps(data))
+    leftover = run(_isolate_home, "doctor")
+    assert "still contains provider env keys" in leftover.stdout
+
+    shell_leak = run(_isolate_home, "doctor", env_extra={"ANTHROPIC_AUTH_TOKEN": "sk-x"})
+    assert "current shell exports ANTHROPIC_AUTH_TOKEN" in shell_leak.stdout
+
+
+def test_doctor_warns_when_official_conf_exists(_isolate_home):
+    run(_isolate_home, "init")
+    (_isolate_home / ".config/ccs/providers/official.conf").write_text("auth=api_key\nkey=sk-X\n")
+
+    result = run(_isolate_home, "doctor")
+
+    assert "providers/official.conf exists but 'official' is built in" in result.stdout
+
+
+def test_use_official_awk_fallback_without_jq(_isolate_home, tmp_path):
+    if not _shutil_which("jq"):
+        pytest.skip("jq not installed; jq path and fallback are identical here")
+    settings_file = _isolate_home / ".claude/settings.json"
+    settings_file.parent.mkdir(parents=True)
+    settings_file.write_text(
+        '{"permissions":{"allow":["Bash(*)"]},"env":{"CUSTOM":"x","ANTHROPIC_API_KEY":"old","ANTHROPIC_BASE_URL":"https://old.example"}}'
+    )
+
+    nojq = _jq_free_path(tmp_path)
+    run(_isolate_home, "use", "official", env_extra={"PATH": nojq})
+
+    data = settings(_isolate_home)
+    assert data["permissions"] == {"allow": ["Bash(*)"]}
+    assert data["env"] == {"CUSTOM": "x"}
