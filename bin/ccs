@@ -95,6 +95,7 @@ Usage:
   ccs use <name> [--no-verify] [--shell] [--project]
   ccs use official [--shell] [--project]
   ccs use --global
+  ccs slim [--apply]
   ccs verify [name]
   ccs doctor
   ccs ls
@@ -111,6 +112,9 @@ Note:
   --project pins a provider for the current directory by writing
   ./.claude/settings.local.json (it must be git-ignored); 'use --global'
   removes that pin so the directory follows the global settings again.
+  ccs slim removes project top-level keys that duplicate the global
+  settings byte for byte; the per-key merge then inherits them, so the
+  effective configuration does not change.
 EOF
 }
 
@@ -1922,6 +1926,100 @@ cmd_current() {
     fi
 }
 
+slim_usage() {
+    cat <<'EOF'
+Usage: ccs slim [--apply]
+
+Report (default) or remove top-level keys in ./.claude/settings.local.json
+that byte-for-byte duplicate the global settings. Claude Code merges scopes
+per key, so a removed duplicate is simply inherited from the global file and
+the effective configuration does not change; global edits then apply here
+automatically. The env block is never touched.
+
+Options:
+  --apply    rewrite the project file (backs it up first; requires jq)
+  --help     show this help
+EOF
+}
+
+# `ccs slim`: the project file usually starts life as a hand copy of the
+# global settings, so most non-env keys are byte-identical duplicates that
+# shadow the global scope forever. A duplicate is an identical minified
+# "key":value line in both scopes; different values or a different key order
+# inside an object are conservatively kept.
+cmd_slim() {
+    apply=0
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --apply) apply=1; shift ;;
+            --help) slim_usage; return 0 ;;
+            *) die "unknown option: $1" ;;
+        esac
+    done
+    project_file=$PWD/$PROJECT_SETTINGS_REL
+    [ -f "$project_file" ] || die "no $PROJECT_SETTINGS_REL in the current directory"
+    [ -f "$GLOBAL_SETTINGS_FILE" ] || die "global settings file not found: $GLOBAL_SETTINGS_FILE"
+    if [ "$apply" -eq 1 ] && ! command -v jq >/dev/null 2>&1; then
+        die "ccs slim --apply needs jq to rewrite the file faithfully; the report mode works without it"
+    fi
+
+    (
+        proj_other=
+        glob_other=
+        slim_tmp=
+        trap 'rm -f "$proj_other" "$glob_other" "$slim_tmp"' HUP INT TERM EXIT
+        proj_other=$(make_temp slim-proj) || exit 1
+        glob_other=$(make_temp slim-glob) || exit 1
+        settings_parse other "$project_file" >"$proj_other" || die "cannot parse $project_file"
+        settings_parse other "$GLOBAL_SETTINGS_FILE" >"$glob_other" || die "cannot parse $GLOBAL_SETTINGS_FILE"
+
+        # Duplicate keys are printed in their raw JSON-string form (quotes
+        # kept) so the jq delete below loses nothing to re-escaping.
+        dup_keys=$(awk '
+            NR == FNR { g[$0] = 1; next }
+            ($0 in g) && match($0, /^"([^"\\]|\\.)*"/) {
+                print substr($0, 1, RLENGTH)
+            }
+        ' "$glob_other" "$proj_other")
+
+        if [ -z "$dup_keys" ]; then
+            printf 'nothing to slim: no top-level key duplicates the global settings\n'
+            exit 0
+        fi
+
+        if [ "$apply" -eq 0 ]; then
+            printf 'duplicates of the global settings (removed by --apply):\n'
+            printf '%s\n' "$dup_keys" | sed -e 's/^"//' -e 's/"$//' -e 's/^/  /'
+            printf 'run: ccs slim --apply\n'
+            exit 0
+        fi
+
+        backups_dir=$CCS_DIR/backups
+        mkdir -p "$backups_dir" || die "cannot create $backups_dir"
+        chmod_private_dir "$backups_dir"
+        backup_file=$backups_dir/slim-$(date +%Y%m%d-%H%M%S)-settings.local.json
+        cp "$project_file" "$backup_file" || die "cannot back up $project_file"
+        chmod_private_file "$backup_file"
+
+        del_json=$(printf '%s\n' "$dup_keys" | awk '
+            BEGIN { ORS = ""; print "[" }
+            NR > 1 { print "," }
+            { print }
+            END { print "]" }
+        ')
+        slim_tmp=$(make_temp slim-out) || exit 1
+        jq --argjson ccs_del "$del_json" 'delpaths($ccs_del | map([.]))' "$project_file" >"$slim_tmp" ||
+            die "jq failed to rewrite $project_file (backup kept at $backup_file)"
+        chmod_private_file "$slim_tmp"
+        mv "$slim_tmp" "$project_file" || die "cannot write $project_file (backup kept at $backup_file)"
+
+        printf 'removed %s duplicate key(s):\n' "$(printf '%s\n' "$dup_keys" | wc -l | tr -d ' ')"
+        printf '%s\n' "$dup_keys" | sed -e 's/^"//' -e 's/"$//' -e 's/^/  /'
+        printf 'these now inherit from the global settings\n'
+        printf 'backup: %s\n' "$backup_file"
+    ) || exit $?
+}
+
 cmd_rm() {
     [ "$#" -eq 1 ] || die "provider name is required"
     rm_name=$1
@@ -1955,6 +2053,7 @@ main() {
         set) cmd_set "$@" ;;
         preset) cmd_preset "$@" ;;
         use) cmd_use "$@" ;;
+        slim) cmd_slim "$@" ;;
         verify) cmd_verify "$@" ;;
         doctor) cmd_doctor "$@" ;;
         ls|list) cmd_ls "$@" ;;

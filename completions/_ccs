@@ -26,6 +26,7 @@ _ccs() {
         'set:Create or update a provider'
         'preset:Create or update a provider from a known recipe'
         'use:Switch active provider'
+        'slim:Remove project keys duplicating the global settings'
         'verify:Verify a provider'
         'doctor:Diagnose local ccs and Claude Code settings'
         'ls:List providers'
@@ -86,6 +87,9 @@ _ccs() {
                     ;;
                 verify|rm|remove)
                     _describe 'provider' providers
+                    ;;
+                slim)
+                    _arguments '--apply[Rewrite the project file (backs up first)]'
                     ;;
                 show)
                     _arguments \

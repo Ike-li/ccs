@@ -216,6 +216,17 @@ ccs use --global               # 移除 pin，回归全局 settings
 
 项目 pin 不会动全局 active 指针；env 变更同样需要重启 Claude Code 会话才生效。
 
+### 给手工复制的项目文件瘦身
+
+项目文件往往是从全局 settings 手工复制出来的，大多数非 env 键和全局逐字节相同——它们会永远遮住全局作用域（重复配置的 hook 甚至会跑两遍）。`ccs slim` 报告这些重复键；`ccs slim --apply` 先备份到 `~/.config/ccs/backups/` 再删除它们，之后这些键自动从全局继承——有效配置完全不变，而且以后改全局、项目自动跟：
+
+```bash
+ccs slim            # 报告与全局重复的顶层键
+ccs slim --apply    # 删除（保留备份；需要 jq）
+```
+
+与全局值不同的键永远保留，`env` 块永不触碰。
+
 ## 常用命令
 
 | 命令 | 用途 |
@@ -232,6 +243,7 @@ ccs use --global               # 移除 pin，回归全局 settings
 | `ccs use <name> --project` | 为当前目录固定 provider（写 `./.claude/settings.local.json`） |
 | `ccs use official --project` | 当前目录固定使用 claude.ai 订阅 |
 | `ccs use --global` | 移除项目 pin，目录回归全局 settings |
+| `ccs slim [--apply]` | 报告/删除项目里与全局重复的顶层键 |
 | `ccs verify [name]` | 单独验证 provider |
 | `ccs doctor` | 本地诊断 settings、active provider、依赖和 shell secret 冲突 |
 | `ccs ls` | 列出 providers |

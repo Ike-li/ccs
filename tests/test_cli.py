@@ -1666,3 +1666,115 @@ def test_use_project_awk_fallback_without_jq(_isolate_home, tmp_path):
     data = project_settings(proj)
     assert data["env"]["ANTHROPIC_BASE_URL"] == "https://kimi.example"
     assert data["env"]["ANTHROPIC_API_KEY"] == "sk-GLOBAL"
+
+
+# --- ccs slim (dedupe project file against global settings) ---
+
+
+def _write_json(path: Path, obj: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(obj, ensure_ascii=False))
+
+
+def _slim_fixture(home: Path) -> Path:
+    _write_json(
+        home / ".claude/settings.json",
+        {
+            "env": {"ANTHROPIC_BASE_URL": "https://global.example", "ANTHROPIC_API_KEY": "sk-G"},
+            "hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "guard.sh"}]}]},
+            "statusLine": {"type": "command", "command": "sl.sh"},
+            "language": "中文",
+        },
+    )
+    proj = home / "proj"
+    _write_json(
+        proj / ".claude/settings.local.json",
+        {
+            "env": {"ANTHROPIC_BASE_URL": "https://pin.example", "ANTHROPIC_API_KEY": "sk-P", "DISABLE_COMPACT": "1"},
+            "hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "guard.sh"}]}]},
+            "statusLine": {"type": "command", "command": "sl.sh"},
+            "language": "English",
+            "model": "default",
+        },
+    )
+    return proj
+
+
+def test_slim_reports_duplicates_without_modifying(_isolate_home):
+    proj = _slim_fixture(_isolate_home)
+    before = (proj / ".claude/settings.local.json").read_text()
+
+    result = run(_isolate_home, "slim", cwd=proj)
+
+    assert "hooks" in result.stdout
+    assert "statusLine" in result.stdout
+    assert "language" not in result.stdout
+    assert "run: ccs slim --apply" in result.stdout
+    assert (proj / ".claude/settings.local.json").read_text() == before
+
+
+def test_slim_apply_removes_duplicates_and_keeps_the_rest(_isolate_home):
+    if not _shutil_which("jq"):
+        pytest.skip("jq not installed; slim --apply requires jq")
+    proj = _slim_fixture(_isolate_home)
+
+    result = run(_isolate_home, "slim", "--apply", cwd=proj)
+
+    data = project_settings(proj)
+    assert "removed 2 duplicate key(s)" in result.stdout
+    assert sorted(data) == ["env", "language", "model"]
+    assert data["env"] == {
+        "ANTHROPIC_BASE_URL": "https://pin.example",
+        "ANTHROPIC_API_KEY": "sk-P",
+        "DISABLE_COMPACT": "1",
+    }
+    assert data["language"] == "English"
+    backups = list((_isolate_home / ".config/ccs/backups").glob("slim-*-settings.local.json"))
+    assert len(backups) == 1
+    assert json.loads(backups[0].read_text())["hooks"]
+    assert (backups[0].stat().st_mode & 0o777) == 0o600
+    # idempotent second run
+    again = run(_isolate_home, "slim", cwd=proj)
+    assert "nothing to slim" in again.stdout
+
+
+def test_slim_keeps_reordered_object_values(_isolate_home):
+    _write_json(
+        _isolate_home / ".claude/settings.json",
+        {"env": {}, "statusLine": {"type": "command", "command": "sl.sh"}},
+    )
+    proj = _isolate_home / "proj"
+    _write_json(
+        proj / ".claude/settings.local.json",
+        {"env": {}, "statusLine": {"command": "sl.sh", "type": "command"}},
+    )
+
+    result = run(_isolate_home, "slim", cwd=proj)
+
+    assert "nothing to slim" in result.stdout
+
+
+def test_slim_requires_project_file_and_global(_isolate_home):
+    no_proj = run(_isolate_home, "slim", check=False)
+    assert no_proj.returncode != 0
+    assert "no .claude/settings.local.json" in no_proj.stderr
+
+    proj = _isolate_home / "proj"
+    _write_json(proj / ".claude/settings.local.json", {"env": {}})
+    no_global = run(_isolate_home, "slim", cwd=proj, check=False)
+    assert no_global.returncode != 0
+    assert "global settings file not found" in no_global.stderr
+
+
+def test_slim_apply_without_jq_refuses(_isolate_home, tmp_path):
+    if not _shutil_which("jq"):
+        pytest.skip("jq not installed; refusal path needs a jq to remove")
+    proj = _slim_fixture(_isolate_home)
+    nojq = _jq_free_path(tmp_path)
+
+    report = run(_isolate_home, "slim", cwd=proj, env_extra={"PATH": nojq})
+    apply_result = run(_isolate_home, "slim", "--apply", cwd=proj, env_extra={"PATH": nojq}, check=False)
+
+    assert "statusLine" in report.stdout
+    assert apply_result.returncode != 0
+    assert "needs jq" in apply_result.stderr

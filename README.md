@@ -213,6 +213,17 @@ Safety rails:
 
 The global active marker is not touched by project pins, and restarting the Claude Code session is still required for env changes to apply.
 
+### Slimming a copied project file
+
+Project files often start life as a hand copy of the global settings, so most non-env keys are byte-identical duplicates that shadow the global scope forever (a duplicated hook even runs twice). `ccs slim` reports the duplicates; `ccs slim --apply` backs the file up under `~/.config/ccs/backups/` and removes them, after which those keys inherit from the global settings — the effective configuration does not change, and future global edits apply to the project automatically:
+
+```bash
+ccs slim            # report duplicated top-level keys
+ccs slim --apply    # remove them (backup kept; requires jq)
+```
+
+Keys with values that differ from the global file are always kept, and the `env` block is never touched.
+
 ## Common Commands
 
 | Command | Purpose |
@@ -229,6 +240,7 @@ The global active marker is not touched by project pins, and restarting the Clau
 | `ccs use <name> --project` | Pin a provider for the current directory (`./.claude/settings.local.json`) |
 | `ccs use official --project` | Pin the claude.ai subscription for the current directory |
 | `ccs use --global` | Remove the project pin; the directory follows global settings again |
+| `ccs slim [--apply]` | Report/remove project keys that duplicate the global settings |
 | `ccs verify [name]` | Verify a provider |
 | `ccs doctor` | Diagnose settings, active provider, dependencies, and shell conflicts |
 | `ccs ls` | List providers |
