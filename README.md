@@ -340,7 +340,7 @@ ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-haiku-4-5
 CLAUDE_CODE_SUBAGENT_MODEL=claude-haiku-4-5
 ```
 
-When writing settings, `ccs` removes managed provider env values and the legacy `apiKeyHelper`, writes the active provider, and preserves unrelated top-level fields plus non-managed `env` entries. If `jq` is available, settings are reserialized through `jq` for readable nested JSON. Without `jq`, the POSIX awk fallback keeps JSON semantics but minifies non-`env` top-level fields.
+When writing settings, `ccs` removes managed provider env values and the legacy `apiKeyHelper`, writes the active provider, and preserves unrelated top-level fields plus non-managed `env` entries. Before every rewrite the current file is backed up to `~/.config/ccs/backups/` (newest 10 kept). A settings file the parser cannot fully walk (hand-added comments, a BOM, truncation) is refused with `cannot parse` and left untouched. If `jq` is available, settings are reserialized through `jq` for readable nested JSON; if `jq` exists but fails on the file, `ccs` warns before falling back. Without `jq`, the POSIX awk fallback keeps JSON semantics but minifies non-`env` top-level fields.
 
 ## Verify
 
@@ -412,6 +412,7 @@ If Claude Code reports an API key/token conflict, see the provider switching sec
 ## Maintenance
 
 - Version history: [CHANGELOG.md](CHANGELOG.md)
+- Why ccs has this shape (constraints, invariants, rejected designs): [docs/design.md](docs/design.md)
 - Comparison with hand-editing settings, shell exports, proxies, and GUI switchers: [docs/compare.md](docs/compare.md)
 - Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
 - Security boundary and reporting: [SECURITY.md](SECURITY.md)

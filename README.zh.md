@@ -351,7 +351,8 @@ CLAUDE_CODE_SUBAGENT_MODEL=claude-haiku-4-5
 ```
 
 `ccs` 写入 settings 时会移除它管理的 provider env 和旧的 `apiKeyHelper`，再写入当前 provider；其他顶层字段和非 ccs 管理的 `env` 会保留。
-如果本机有 `jq`，`ccs` 会用它重新序列化 settings，尽量保持嵌套字段可读；没有 `jq` 时会回退到内置 POSIX awk 写入器，非 `env` 顶层字段会被压缩成单行但语义保持不变。
+每次重写前，当前文件会先备份到 `~/.config/ccs/backups/`（保留最新 10 份）。解析器无法完整走通的 settings 文件（手工添加的注释、BOM、被截断的内容）会被拒绝并报 `cannot parse`，原文件保持不动。
+如果本机有 `jq`，`ccs` 会用它重新序列化 settings，尽量保持嵌套字段可读；`jq` 存在但处理失败时，`ccs` 会先警告再回退。没有 `jq` 时会回退到内置 POSIX awk 写入器，非 `env` 顶层字段会被压缩成单行但语义保持不变。
 
 ## Verify
 
@@ -420,6 +421,7 @@ Claude Code 启动时如果报 `Auth conflict: Both a token ... and an API key .
 ## 项目维护
 
 - 版本变化见 [CHANGELOG.md](CHANGELOG.md)
+- ccs 为什么是这个形状（约束、不变量、被否决的方案）见 [docs/design.md](docs/design.md)
 - 和手改 settings、shell export、本地 proxy 的对比见 [docs/compare.md](docs/compare.md)
 - 贡献说明见 [CONTRIBUTING.md](CONTRIBUTING.md)
 - 安全边界和漏洞报告见 [SECURITY.md](SECURITY.md)
