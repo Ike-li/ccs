@@ -103,6 +103,10 @@ if [ -n "$config" ]; then
         printf 'CONFIG:%s\\n' "$line" >> "$CCS_FAKE_CURL_LOG"
     done < "$config"
 fi
+if [ -n "${CCS_FAKE_CURL_EXIT:-}" ]; then
+    printf 'curl: (7) Failed to connect to host\\n' >&2
+    exit "$CCS_FAKE_CURL_EXIT"
+fi
 [ -n "$out" ] && printf '%s' "${CCS_FAKE_CURL_BODY:-{\\"ok\\":true}}" > "$out"
 printf '%s' "${CCS_FAKE_CURL_STATUS:-200}"
 """
@@ -1049,20 +1053,22 @@ def test_provider_file_has_strict_perms(_isolate_home):
     assert mode & 0o077 == 0
 
 
-def test_use_with_corrupt_settings_json(_isolate_home):
+def test_use_refuses_to_rewrite_corrupt_settings_json(_isolate_home):
     settings_file = _isolate_home / ".claude/settings.json"
     settings_file.parent.mkdir(parents=True)
     settings_file.write_text("this is not json")
 
     run(_isolate_home, "init")
     run(_isolate_home, "set", "k", "--base-url", "https://k", "--key", "sk-k")
-    result = run(_isolate_home, "use", "k", "--no-verify")
+    result = run(_isolate_home, "use", "k", "--no-verify", check=False)
 
-    assert result.returncode == 0
-    assert "switched -> k" in result.stdout
-    data = settings(_isolate_home)
-    assert data["env"]["ANTHROPIC_BASE_URL"] == "https://k"
-    assert data["env"]["ANTHROPIC_API_KEY"] == "sk-k"
+    # A settings file the parser cannot walk is refused, not treated as
+    # empty: rewriting from a partial read is how user config gets erased.
+    assert result.returncode != 0
+    assert "cannot parse" in result.stderr
+    assert settings_file.read_text() == "this is not json"
+    assert "switched -> k" not in result.stdout
+    assert (_isolate_home / ".config/ccs/active").read_text().strip() == ""
 
 
 def test_use_fails_when_settings_path_is_not_file_and_keeps_active(_isolate_home):
@@ -1778,3 +1784,226 @@ def test_slim_apply_without_jq_refuses(_isolate_home, tmp_path):
     assert "statusLine" in report.stdout
     assert apply_result.returncode != 0
     assert "needs jq" in apply_result.stderr
+
+
+def test_use_with_default_verify_switches_and_failure_keeps_state(_isolate_home, tmp_path):
+    """The default `ccs use` path (no --no-verify): a passing probe applies
+    the provider; a failing probe leaves settings.json and active untouched."""
+    fake_bin = tmp_path / "bin"
+    log_file = tmp_path / "curl.log"
+    write_fake_curl(fake_bin, log_file)
+    env_extra = {"PATH": f"{fake_bin}:{os.environ['PATH']}", "CCS_FAKE_CURL_LOG": str(log_file)}
+
+    run(_isolate_home, "init", env_extra=env_extra)
+    run(_isolate_home, "set", "good", "--base-url", "https://good.example", "--key", "sk-good", env_extra=env_extra)
+    run(_isolate_home, "set", "bad", "--base-url", "https://bad.example", "--key", "sk-bad", env_extra=env_extra)
+
+    ok = run(_isolate_home, "use", "good", env_extra=env_extra)
+    assert "verify: OK (200)" in ok.stdout
+    assert "switched -> good" in ok.stdout
+    assert settings(_isolate_home)["env"]["ANTHROPIC_BASE_URL"] == "https://good.example"
+
+    settings_before = (_isolate_home / ".claude/settings.json").read_text()
+    fail = run(
+        _isolate_home,
+        "use",
+        "bad",
+        env_extra={**env_extra, "CCS_FAKE_CURL_STATUS": "401", "CCS_FAKE_CURL_BODY": '{"error":{"message":"no"}}'},
+        check=False,
+    )
+    assert fail.returncode != 0
+    assert "verify failed" in fail.stdout
+    assert (_isolate_home / ".claude/settings.json").read_text() == settings_before
+    assert (_isolate_home / ".config/ccs/active").read_text().strip() == "good"
+
+
+def test_verify_reports_curl_connection_failure(_isolate_home, tmp_path):
+    fake_bin = tmp_path / "bin"
+    log_file = tmp_path / "curl.log"
+    write_fake_curl(fake_bin, log_file)
+    env_extra = {
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "CCS_FAKE_CURL_LOG": str(log_file),
+        "CCS_FAKE_CURL_EXIT": "7",
+    }
+
+    run(_isolate_home, "init", env_extra=env_extra)
+    run(_isolate_home, "set", "api", "--base-url", "https://down.example", "--key", "sk-api", env_extra=env_extra)
+    result = run(_isolate_home, "verify", "api", check=False, env_extra=env_extra)
+
+    assert result.returncode != 0
+    assert "Connection failed: curl: (7) Failed to connect to host" in result.stdout
+
+
+def test_verify_defaults_to_active_provider_and_requires_one(_isolate_home, tmp_path):
+    fake_bin = tmp_path / "bin"
+    log_file = tmp_path / "curl.log"
+    write_fake_curl(fake_bin, log_file)
+    env_extra = {"PATH": f"{fake_bin}:{os.environ['PATH']}", "CCS_FAKE_CURL_LOG": str(log_file)}
+
+    run(_isolate_home, "init", env_extra=env_extra)
+    none = run(_isolate_home, "verify", check=False, env_extra=env_extra)
+    assert none.returncode != 0
+    assert "no provider given and no active provider" in none.stderr
+
+    run(_isolate_home, "set", "api", "--base-url", "https://api.example", "--key", "sk-api", env_extra=env_extra)
+    run(_isolate_home, "use", "api", "--no-verify", env_extra=env_extra)
+    result = run(_isolate_home, "verify", env_extra=env_extra)
+    assert result.stdout.startswith("api: ")
+    assert "OK (200)" in result.stdout
+
+
+def test_set_rejects_unsupported_env_key(_isolate_home):
+    run(_isolate_home, "init")
+    result = run(_isolate_home, "set", "k", "--base-url", "https://k", "--key", "sk-k", "-e", "EVIL_KEY=1", check=False)
+    assert result.returncode != 0
+    assert "unsupported env key 'EVIL_KEY'" in result.stderr
+    assert not (_isolate_home / ".config/ccs/providers/k.conf").exists()
+
+
+def test_set_refuses_to_unset_base_url(_isolate_home):
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "k", "--base-url", "https://k", "--key", "sk-k")
+    result = run(_isolate_home, "set", "k", "--unset-env", "ANTHROPIC_BASE_URL", check=False)
+    assert result.returncode != 0
+    assert "ANTHROPIC_BASE_URL cannot be removed" in result.stderr
+    assert provider_conf(_isolate_home, "k")["ANTHROPIC_BASE_URL"] == "https://k"
+
+
+def test_set_update_without_key_keeps_existing_secret(_isolate_home):
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "k", "--base-url", "https://k", "--key", "sk-original")
+    run(_isolate_home, "set", "k", "--model", "m-1")
+    conf = provider_conf(_isolate_home, "k")
+    assert conf["key"] == "sk-original"
+    assert conf["ANTHROPIC_MODEL"] == "m-1"
+
+
+@pytest.mark.parametrize(
+    ("args", "expected_stderr"),
+    [
+        (("bogus",), "unknown command: bogus"),
+        (("use", "ghost", "--no-verify"), "no such provider: 'ghost'"),
+        (("rm", "ghost"), "no such provider: 'ghost'"),
+        (("show", "ghost"), "no such provider: 'ghost'"),
+        (("use",), "provider name is required"),
+        (("use", "--bogus"), "unknown option: --bogus"),
+        (("doctor", "extra"), "doctor does not accept arguments"),
+        (("verify", "a", "b"), "too many arguments"),
+    ],
+)
+def test_error_paths_report_and_fail(_isolate_home, args, expected_stderr):
+    run(_isolate_home, "init")
+    result = run(_isolate_home, *args, check=False)
+    assert result.returncode != 0
+    assert expected_stderr in result.stderr
+
+
+def test_bare_invocation_defaults_to_ls(_isolate_home):
+    run(_isolate_home, "init")
+    bare = run(_isolate_home)
+    listed = run(_isolate_home, "ls")
+    assert bare.stdout == listed.stdout
+
+
+def test_doctor_warns_when_both_secrets_present(_isolate_home):
+    _write_json(
+        _isolate_home / ".claude/settings.json",
+        {"env": {"ANTHROPIC_API_KEY": "sk-a", "ANTHROPIC_AUTH_TOKEN": "sk-b", "ANTHROPIC_BASE_URL": "https://x"}},
+    )
+    run(_isolate_home, "init")
+    result = run(_isolate_home, "doctor")
+    assert "contains both ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN" in result.stdout
+
+
+def test_use_with_empty_settings_file_writes_valid_settings(_isolate_home):
+    """A zero-byte settings.json is treated like an absent one, not committed
+    back as zero bytes (jq emits nothing for empty input with rc 0)."""
+    settings_file = _isolate_home / ".claude/settings.json"
+    settings_file.parent.mkdir(parents=True)
+    settings_file.write_text("")
+
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "k", "--base-url", "https://k", "--key", "sk-k")
+    result = run(_isolate_home, "use", "k", "--no-verify")
+
+    assert "switched -> k" in result.stdout
+    data = settings(_isolate_home)
+    assert data["env"]["ANTHROPIC_BASE_URL"] == "https://k"
+    assert data["env"]["ANTHROPIC_API_KEY"] == "sk-k"
+
+
+def test_use_with_whitespace_only_settings_recovers(_isolate_home):
+    settings_file = _isolate_home / ".claude/settings.json"
+    settings_file.parent.mkdir(parents=True)
+    settings_file.write_text("   \n")
+
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "k", "--base-url", "https://k", "--key", "sk-k")
+    result = run(_isolate_home, "use", "k", "--no-verify")
+
+    assert "switched -> k" in result.stdout
+    assert settings(_isolate_home)["env"]["ANTHROPIC_API_KEY"] == "sk-k"
+
+
+def test_use_refuses_bom_settings_file(_isolate_home):
+    """A BOM-prefixed settings.json is refused with a clear error instead of
+    aborting inside awk's multibyte regex path (or being rewritten blind)."""
+    settings_file = _isolate_home / ".claude/settings.json"
+    settings_file.parent.mkdir(parents=True)
+    settings_file.write_bytes(b'\xef\xbb\xbf{"env":{}}')
+
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "k", "--base-url", "https://k", "--key", "sk-k")
+    result = run(_isolate_home, "use", "k", "--no-verify", check=False)
+
+    assert result.returncode != 0
+    assert "cannot parse" in result.stderr
+    assert settings_file.read_bytes() == b'\xef\xbb\xbf{"env":{}}'
+
+
+def test_use_project_dies_when_global_settings_unparseable(_isolate_home):
+    """The project-mode bleed-through guard must die on an unparseable global
+    settings file instead of silently pinning without the guard."""
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "glm", "--base-url", "https://glm.example", "--key", "sk-p")
+    (_isolate_home / ".claude").mkdir(exist_ok=True)
+    (_isolate_home / ".claude/settings.json").write_text("{ // not json\n}")
+    proj = _git_project(_isolate_home)
+
+    result = run(_isolate_home, "use", "glm", "--project", "--no-verify", cwd=proj, check=False)
+
+    assert result.returncode != 0
+    assert "cannot parse" in result.stderr
+    assert not (proj / ".claude/settings.local.json").exists()
+
+
+def test_use_backs_up_settings_before_rewrite(_isolate_home):
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "a", "--base-url", "https://a", "--key", "sk-a")
+    run(_isolate_home, "set", "b", "--base-url", "https://b", "--key", "sk-b")
+    run(_isolate_home, "use", "a", "--no-verify")
+
+    before = (_isolate_home / ".claude/settings.json").read_text()
+    run(_isolate_home, "use", "b", "--no-verify")
+
+    backups = sorted((_isolate_home / ".config/ccs/backups").glob("settings-*.json"))
+    assert backups, "expected a settings backup before the rewrite"
+    assert backups[-1].read_text() == before
+
+
+def test_settings_backups_are_pruned(_isolate_home):
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "a", "--base-url", "https://a", "--key", "sk-a")
+    run(_isolate_home, "use", "a", "--no-verify")
+
+    backups_dir = _isolate_home / ".config/ccs/backups"
+    backups_dir.mkdir(parents=True, exist_ok=True)
+    for i in range(12):
+        (backups_dir / f"settings-20200101-0000{i:02d}-1.json").write_text("{}")
+
+    run(_isolate_home, "use", "a", "--no-verify")
+
+    backups = sorted(backups_dir.glob("settings-*.json"))
+    assert len(backups) <= 10
+    assert not (backups_dir / "settings-20200101-000000-1.json").exists()

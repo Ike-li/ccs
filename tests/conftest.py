@@ -27,4 +27,17 @@ def _isolate_home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(isolated_home))
     monkeypatch.delenv("CCS_DIR", raising=False)
     monkeypatch.delenv("CLAUDE_SETTINGS_FILE", raising=False)
+    # Keep host git config out of the sandbox: ccs runs `git check-ignore`
+    # and tests run `git init`, both of which read the developer's
+    # global/system config. A host excludesfile that happens to ignore
+    # *.local.json would silently flip the gitignore-guard tests.
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("GIT_DIR", raising=False)
+    # ccs's make_temp honours TMPDIR; point it into the sandbox so die
+    # paths cannot strand ccs-* temp files in the real /tmp.
+    tmp_dir = tmp_path / ".pytest_tmpdir"
+    tmp_dir.mkdir(exist_ok=True)
+    monkeypatch.setenv("TMPDIR", str(tmp_dir))
     yield isolated_home
