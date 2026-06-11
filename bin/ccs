@@ -21,6 +21,11 @@ CCS_DIR=${CCS_DIR:-"$HOME/.config/ccs"}
 PROVIDERS_DIR=$CCS_DIR/providers
 ACTIVE_FILE=$CCS_DIR/active
 SETTINGS_FILE=${CLAUDE_SETTINGS_FILE:-"$HOME/.claude/settings.json"}
+# cmd_use --project retargets SETTINGS_FILE at the per-project file. The
+# global path is kept separately so the bleed-through guard can still read
+# which managed keys the global settings define.
+GLOBAL_SETTINGS_FILE=$SETTINGS_FILE
+PROJECT_SETTINGS_REL=.claude/settings.local.json
 
 AUTH_API_KEY=api_key
 AUTH_TOKEN=auth_token
@@ -87,8 +92,9 @@ Usage:
                  [--model M] [--opus-model M] [--sonnet-model M] [--haiku-model M]
                  [--unset-model] [-e K=V] [--unset-env K]
   ccs preset <deepseek|openrouter> --key KEY [--name NAME]
-  ccs use <name> [--no-verify] [--shell]
-  ccs use official [--shell]
+  ccs use <name> [--no-verify] [--shell] [--project]
+  ccs use official [--shell] [--project]
+  ccs use --global
   ccs verify [name]
   ccs doctor
   ccs ls
@@ -102,6 +108,9 @@ Note:
   'official' is built in: it removes the managed provider env so Claude Code
   uses your claude.ai subscription login instead (run /login once inside
   Claude Code).
+  --project pins a provider for the current directory by writing
+  ./.claude/settings.local.json (it must be git-ignored); 'use --global'
+  removes that pin so the directory follows the global settings again.
 EOF
 }
 
@@ -421,7 +430,7 @@ settings_parse() {
                     else if (c == "t") out = out "\t"
                     else if (c == "u") {
                         u = substr(raw, i + 1, 4)
-                        # Decode ASCII-range escapes ( -) to the real
+                        # Decode ASCII-range escapes (\x00-\x7f) to the real
                         # character so an escaped key like ANTHROPIC_API_KEY is
                         # recognized as managed. Non-ASCII escapes are kept
                         # literal (they are never managed key names).
@@ -461,7 +470,7 @@ settings_parse() {
         function is_managed(key) {
             return index(managed, " " key " ") > 0
         }
-        function emit_env(vs, ve,    i, key_start, key_end, key, colon, value_start, value_end, raw_value) {
+        function emit_env(vs, ve, which,    i, key_start, key_end, key, colon, value_start, value_end, raw_value) {
             if (substr(s, skip_ws(vs), 1) != "{") return
             i = skip_ws(vs) + 1
             while (i < ve) {
@@ -476,7 +485,11 @@ settings_parse() {
                 value_start = skip_ws(colon + 1)
                 value_end = scan_value(value_start)
                 raw_value = substr(s, value_start, value_end - value_start)
-                if (!is_managed(key)) {
+                if (which == "managed") {
+                    if (is_managed(key)) {
+                        printf "%s\t%s\n", key, minify(raw_value)
+                    }
+                } else if (!is_managed(key)) {
                     printf "%s\t%s\n", key, minify(raw_value)
                 }
                 i = skip_ws(value_end)
@@ -504,7 +517,9 @@ settings_parse() {
                 value_start = skip_ws(colon + 1)
                 value_end = scan_value(value_start)
                 if (mode == "env" && key == "env") {
-                    emit_env(value_start, value_end)
+                    emit_env(value_start, value_end, "keep")
+                } else if (mode == "managed" && key == "env") {
+                    emit_env(value_start, value_end, "managed")
                 } else if (mode == "other" && key != "env" && key != "apiKeyHelper") {
                     print minify(substr(s, field_start, value_end - field_start))
                 }
@@ -631,7 +646,10 @@ settings_env_set() {
         rm -f "$tmp"
         die "cannot update temporary env file"
     }
-    if [ -n "$value" ]; then
+    # An empty value normally removes the key; "force" writes it as "" instead
+    # (the project-mode bleed-through guard relies on Claude Code treating an
+    # empty env value as unset).
+    if [ -n "$value" ] || [ "${4:-}" = "force" ]; then
         {
             printf '%s\t"' "$key"
             printf '%s' "$value" | json_quote
@@ -674,6 +692,24 @@ apply_provider() {
         settings_parse env "$SETTINGS_FILE" >"$env_tmp" || die "cannot parse $SETTINGS_FILE"
 
         provider_env_to_file "$provider_path" "$provider_env_tmp"
+
+        # Project mode bleed-through guard: managed keys that the global
+        # settings define but this provider does not would fall through
+        # Claude Code's per-key settings merge (project local overrides per
+        # key; absent keys inherit the global value). Write them as "" --
+        # Claude Code treats an empty env value as unset. The opposite-auth
+        # secret is deliberately included, which also prevents the
+        # "Both a token and an API key are set" conflict.
+        if [ "${use_project:-0}" -eq 1 ]; then
+            secret_key=$(secret_env_name "$auth")
+            settings_parse managed "$GLOBAL_SETTINGS_FILE" | while IFS="$TAB" read -r gkey _; do
+                [ -n "$gkey" ] || continue
+                [ "$gkey" != "$secret_key" ] || continue
+                [ -z "$(conf_get "$provider_env_tmp" "$gkey")" ] || continue
+                settings_env_set "$env_tmp" "$gkey" "" force
+            done
+        fi
+
         while IFS= read -r line; do
             [ -n "$line" ] || continue
             settings_env_set "$env_tmp" "${line%%=*}" "${line#*=}"
@@ -693,6 +729,30 @@ clear_provider_env() {
         other_tmp=$(make_temp other) || exit 1
         settings_parse other "$SETTINGS_FILE" >"$other_tmp" || die "cannot parse $SETTINGS_FILE"
         settings_parse env "$SETTINGS_FILE" >"$env_tmp" || die "cannot parse $SETTINGS_FILE"
+        write_settings_json "$other_tmp" "$env_tmp"
+    ) || exit $?
+}
+
+# Pin the claude.ai subscription inside the project file: blank every managed
+# key the global settings currently define, plus the auth/url/model core that
+# any future global provider would define, so none of them bleed through the
+# per-key settings merge. Claude Code treats an empty env value as unset.
+apply_official_project() {
+    (
+        env_tmp=
+        other_tmp=
+        trap 'rm -f "$env_tmp" "$other_tmp"' HUP INT TERM EXIT
+        env_tmp=$(make_temp env) || exit 1
+        other_tmp=$(make_temp other) || exit 1
+        settings_parse other "$SETTINGS_FILE" >"$other_tmp" || die "cannot parse $SETTINGS_FILE"
+        settings_parse env "$SETTINGS_FILE" >"$env_tmp" || die "cannot parse $SETTINGS_FILE"
+        {
+            settings_parse managed "$GLOBAL_SETTINGS_FILE" | awk -F '\t' '{ print $1 }'
+            printf '%s\n%s\n%s\n%s\n' ANTHROPIC_BASE_URL "$ENV_API_KEY" "$ENV_AUTH_TOKEN" ANTHROPIC_MODEL
+        } | sort -u | while IFS= read -r gkey; do
+            [ -n "$gkey" ] || continue
+            settings_env_set "$env_tmp" "$gkey" "" force
+        done
         write_settings_json "$other_tmp" "$env_tmp"
     ) || exit $?
 }
@@ -1335,6 +1395,63 @@ doctor_fail() {
     printf 'fail: %s\n' "$1"
 }
 
+json_string() {
+    printf '"'
+    printf '%s' "$1" | json_quote
+    printf '"'
+}
+
+# Resolve a project pin's raw (minified JSON) base-url and secret against the
+# provider .conf files. Echoes the provider name; rc 1 when nothing matches.
+# Matching on URL plus secret keeps same-endpoint/different-key providers
+# distinct.
+resolve_pin_name() {
+    pin_url_raw=$1
+    pin_secret_raw=$2
+    for pin_file in "$PROVIDERS_DIR"/*.conf; do
+        [ -e "$pin_file" ] || continue
+        pin_name=$(basename "$pin_file" .conf)
+        [ "$pin_name" != "$OFFICIAL_NAME" ] || continue
+        [ "$(json_string "$(conf_get "$pin_file" ANTHROPIC_BASE_URL)")" = "$pin_url_raw" ] || continue
+        [ "$(json_string "$(conf_get "$pin_file" key)")" = "$pin_secret_raw" ] || continue
+        printf '%s' "$pin_name"
+        return 0
+    done
+    return 1
+}
+
+# Summarize the cwd project pin for current/doctor. The pin has no marker
+# file of its own: it is derived from the managed env keys actually present
+# in .claude/settings.local.json, so there is no pointer to go stale.
+# rc 1 when the file is absent or holds no managed keys.
+project_pin_display() {
+    pin_file_path=$PWD/$PROJECT_SETTINGS_REL
+    [ -f "$pin_file_path" ] || return 1
+    pin_managed=$(settings_parse managed "$pin_file_path") || return 1
+    [ -n "$pin_managed" ] || return 1
+    pin_url_raw=$(printf '%s\n' "$pin_managed" | awk -F '\t' '$1 == "ANTHROPIC_BASE_URL" { print $2; exit }')
+    if [ "$pin_url_raw" = '""' ]; then
+        # apply_official_project always blanks the base URL, so an explicit
+        # "" means the subscription pin.
+        printf '%s (claude.ai subscription pin)' "$OFFICIAL_NAME"
+        return 0
+    fi
+    if [ -z "$pin_url_raw" ]; then
+        printf '(partial pin: no ANTHROPIC_BASE_URL)'
+        return 0
+    fi
+    pin_secret_raw=$(printf '%s\n' "$pin_managed" | awk -F '\t' '$1 == "ANTHROPIC_API_KEY" { print $2; exit }')
+    if [ -z "$pin_secret_raw" ] || [ "$pin_secret_raw" = '""' ]; then
+        pin_secret_raw=$(printf '%s\n' "$pin_managed" | awk -F '\t' '$1 == "ANTHROPIC_AUTH_TOKEN" { print $2; exit }')
+    fi
+    pin_url_display=$(printf '%s\n' "$pin_url_raw" | sed -e 's/^"//' -e 's/"$//')
+    if pin_name=$(resolve_pin_name "$pin_url_raw" "$pin_secret_raw"); then
+        printf '%s -> %s' "$pin_name" "$pin_url_display"
+    else
+        printf '(unregistered) -> %s' "$pin_url_display"
+    fi
+}
+
 cmd_doctor() {
     [ "$#" -eq 0 ] || die "doctor does not accept arguments"
 
@@ -1468,6 +1585,36 @@ cmd_doctor() {
         fi
     fi
 
+    project_file=$PWD/$PROJECT_SETTINGS_REL
+    if [ -f "$project_file" ]; then
+        if pin_display=$(project_pin_display); then
+            doctor_ok "project pin (cwd): $pin_display"
+            if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1 &&
+                ! git check-ignore -q -- "$PROJECT_SETTINGS_REL" 2>/dev/null; then
+                # "[^"] means a non-empty secret value; blanked "" pins are safe.
+                if grep -Eq '"(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN)"[[:space:]]*:[[:space:]]*"[^"]' "$project_file" 2>/dev/null; then
+                    doctor_fail "$PROJECT_SETTINGS_REL holds a provider secret but is not git-ignored (fix: printf '%s\n' '$PROJECT_SETTINGS_REL' >> .gitignore)"
+                else
+                    doctor_warn "$PROJECT_SETTINGS_REL is not git-ignored"
+                fi
+            fi
+            bleed=$({
+                settings_parse managed "$project_file" | awk -F '\t' '{ print "P\t" $1 }'
+                settings_parse managed "$GLOBAL_SETTINGS_FILE" | awk -F '\t' '{ print "G\t" $1 }'
+            } | awk -F '\t' '
+                $1 == "P" { p[$2] = 1 }
+                $1 == "G" { g[$2] = 1 }
+                END { for (k in g) if (!(k in p)) print k }
+            ' | sort | tr '\n' ' ')
+            bleed=${bleed% }
+            if [ -n "$bleed" ]; then
+                doctor_warn "global managed keys bleed into this project: $bleed (re-run: ccs use <name> --project)"
+            fi
+        else
+            doctor_ok "project file present (cwd), no provider pin"
+        fi
+    fi
+
     if [ "$doctor_fail_count" -gt 0 ]; then
         printf 'summary: %s failure(s), %s warning(s)\n' "$doctor_fail_count" "$doctor_warn_count"
         return 1
@@ -1494,19 +1641,61 @@ use_note() {
     fi
 }
 
+# Refuse to write a provider secret into a project file that git would
+# commit. check-ignore covers .gitignore, .git/info/exclude, and the global
+# excludesfile; outside a git work tree there is nothing to leak into.
+project_secret_guard() {
+    command -v git >/dev/null 2>&1 || {
+        warn "git not found; cannot confirm $PROJECT_SETTINGS_REL is git-ignored"
+        return 0
+    }
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+    git check-ignore -q -- "$PROJECT_SETTINGS_REL" 2>/dev/null && return 0
+    die "refusing to write a provider secret: $PROJECT_SETTINGS_REL is not git-ignored
+  fix: printf '%s\n' '$PROJECT_SETTINGS_REL' >> .gitignore"
+}
+
+# `ccs use --global`: drop the project pin so the directory follows the
+# global settings again. Only managed env keys are removed; everything else
+# in the project file (permissions, hooks, non-managed env) stays.
+use_project_global_reset() {
+    if [ ! -f "$PWD/$PROJECT_SETTINGS_REL" ]; then
+        use_note "no $PROJECT_SETTINGS_REL here; global settings already apply"
+        return 0
+    fi
+    SETTINGS_FILE=$PWD/$PROJECT_SETTINGS_REL
+    clear_provider_env
+    reset_active=$(active_name)
+    [ -n "$reset_active" ] || reset_active='(none)'
+    use_note "project pin removed; this directory now follows the global settings (active: $reset_active)"
+    if [ "$use_shell" -eq 1 ]; then
+        print_shell_cleanup
+        use_note "Current shell cleanup commands were printed to stdout."
+    fi
+    use_note "Restart Claude Code session to pick up the change."
+}
+
 # `ccs use official`: no .conf file and nothing to curl-verify -- the
 # subscription credential is Claude Code's own OAuth login, which ccs never
-# touches. Removing the managed provider env from settings.json is exactly
-# what makes Claude Code fall back to it.
+# touches. Globally, removing the managed provider env from settings.json is
+# what makes Claude Code fall back to it; in project mode the keys are
+# blanked instead so the global values cannot bleed through the merge.
 use_official() {
-    clear_provider_env
-    if ! set_active "$OFFICIAL_NAME"; then
-        warn "settings.json no longer pins a provider but the active marker could not be updated"
-        warn "re-run: ccs use $OFFICIAL_NAME"
-        exit 1
+    if [ "${use_project:-0}" -eq 1 ]; then
+        apply_official_project
+        use_note "project pinned -> $OFFICIAL_NAME (claude.ai subscription)"
+        use_note "file: $PROJECT_SETTINGS_REL"
+        use_note "Run /login inside Claude Code if needed."
+    else
+        clear_provider_env
+        if ! set_active "$OFFICIAL_NAME"; then
+            warn "settings.json no longer pins a provider but the active marker could not be updated"
+            warn "re-run: ccs use $OFFICIAL_NAME"
+            exit 1
+        fi
+        use_note "switched -> $OFFICIAL_NAME (claude.ai subscription)"
+        use_note "Managed provider env removed from settings.json; run /login inside Claude Code if needed."
     fi
-    use_note "switched -> $OFFICIAL_NAME (claude.ai subscription)"
-    use_note "Managed provider env removed from settings.json; run /login inside Claude Code if needed."
     if [ "$use_shell" -eq 1 ]; then
         print_shell_cleanup
         use_note "Current shell cleanup commands were printed to stdout."
@@ -1522,19 +1711,36 @@ use_official() {
 }
 
 cmd_use() {
-    [ "$#" -ge 1 ] || die "provider name is required"
-    name=$1
-    shift
+    name=
     no_verify=0
     use_shell=0
+    use_project=0
+    use_global=0
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --no-verify) no_verify=1; shift ;;
             --shell) use_shell=1; shift ;;
-            *) die "unknown option: $1" ;;
+            --project) use_project=1; shift ;;
+            --global) use_global=1; shift ;;
+            --*) die "unknown option: $1" ;;
+            *)
+                [ -z "$name" ] || die "unexpected argument: $1"
+                name=$1
+                shift
+                ;;
         esac
     done
+    if [ "$use_global" -eq 1 ]; then
+        [ "$use_project" -eq 0 ] || die "--global and --project cannot be used together"
+        [ -z "$name" ] || die "use --global takes no provider name; it removes the project pin"
+        use_project_global_reset
+        return 0
+    fi
+    [ -n "$name" ] || die "provider name is required"
     require_provider_name "$name"
+    if [ "$use_project" -eq 1 ]; then
+        SETTINGS_FILE=$PWD/$PROJECT_SETTINGS_REL
+    fi
     if [ "$name" = "$OFFICIAL_NAME" ]; then
         [ ! -f "$(provider_file "$name")" ] || warn "ignoring providers/$OFFICIAL_NAME.conf: '$OFFICIAL_NAME' is built in"
         use_official
@@ -1547,6 +1753,12 @@ cmd_use() {
     key=$(conf_get "$file" key)
     base_url=$(conf_get "$file" ANTHROPIC_BASE_URL)
     model=$(probe_model "$file")
+
+    # Check the gitignore guard before verify so a misconfigured project
+    # fails fast without a network round-trip.
+    if [ "$use_project" -eq 1 ]; then
+        project_secret_guard
+    fi
 
     if [ "$no_verify" -eq 0 ]; then
         msg=$(verify_request "$base_url" "$key" "$model" "$auth") || {
@@ -1563,13 +1775,21 @@ cmd_use() {
     # new provider is already live, so surface the inconsistency loudly instead
     # of dying silently.
     apply_provider "$name"
-    if ! set_active "$name"; then
-        warn "settings.json now uses '$name' but the active marker could not be updated"
-        warn "re-run: ccs use $name"
-        exit 1
+    if [ "$use_project" -eq 1 ]; then
+        # The project pin is per-directory state derived from the file itself;
+        # the global active marker is deliberately left alone.
+        use_note "project pinned -> $name"
+        use_note "base_url: $base_url"
+        use_note "file: $PROJECT_SETTINGS_REL"
+    else
+        if ! set_active "$name"; then
+            warn "settings.json now uses '$name' but the active marker could not be updated"
+            warn "re-run: ccs use $name"
+            exit 1
+        fi
+        use_note "switched -> $name"
+        use_note "base_url: $base_url"
     fi
-    use_note "switched -> $name"
-    use_note "base_url: $base_url"
     warn_preferred_auth_token "$name" "$auth" "$base_url"
     if [ "$use_shell" -eq 1 ]; then
         print_shell_cleanup
@@ -1685,17 +1905,21 @@ cmd_show() {
 
 cmd_current() {
     name=$(active_name)
-    [ -n "$name" ] || {
-        printf 'No active provider\n'
-        return 0
-    }
-    if [ "$name" = "$OFFICIAL_NAME" ]; then
-        printf '%s -> claude.ai subscription\n' "$OFFICIAL_NAME"
-        return 0
+    if [ -z "$name" ]; then
+        global_line='No active provider'
+    elif [ "$name" = "$OFFICIAL_NAME" ]; then
+        global_line="$OFFICIAL_NAME -> claude.ai subscription"
+    else
+        file=$(provider_file "$name")
+        [ -f "$file" ] || die "active provider '$name' is missing"
+        global_line="$name -> $(conf_get "$file" ANTHROPIC_BASE_URL)"
     fi
-    file=$(provider_file "$name")
-    [ -f "$file" ] || die "active provider '$name' is missing"
-    printf '%s -> %s\n' "$name" "$(conf_get "$file" ANTHROPIC_BASE_URL)"
+    if pin_display=$(project_pin_display); then
+        printf 'project: %s (%s)\n' "$pin_display" "$PROJECT_SETTINGS_REL"
+        printf 'global:  %s\n' "$global_line"
+    else
+        printf '%s\n' "$global_line"
+    fi
 }
 
 cmd_rm() {

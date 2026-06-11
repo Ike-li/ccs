@@ -7,6 +7,11 @@ All notable changes to `ccs` are documented here.
 ### Added
 
 - Add the built-in `official` pseudo provider: `ccs use official` removes the managed provider env from `settings.json` so Claude Code falls back to the claude.ai subscription login. `ls`/`current`/`show`/`doctor` render it, shell completions offer it for `use`/`show`, and the name is reserved against `set`/`preset`/`rm`.
+- Add per-project provider pinning: `ccs use <name> --project` writes the managed env into `./.claude/settings.local.json` and `ccs use --global` removes the pin while preserving everything else in the file. Secrets are only written when the file is git-ignored; managed keys defined globally but not by the pinned provider are blanked to `""` so they cannot bleed through Claude Code's per-key settings merge (this also covers `ccs use official --project`). `ccs current` becomes project-aware with a two-line view that resolves the pin back to a provider name, and `ccs doctor` reports bleed-through keys, missing gitignore coverage, and unpinned project files.
+
+### Fixed
+
+- Replace literal NUL/DEL bytes accidentally embedded in an awk comment so `grep`/`file` treat `bin/ccs` as text again.
 
 ## v0.7.0 - 2026-05-29
 

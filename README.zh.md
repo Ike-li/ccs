@@ -198,6 +198,24 @@ ccs use official
 
 如果还没登录过，在 Claude Code 里执行一次 `/login`；切回三方 provider 直接 `ccs use <name>`。如果当前 shell 还 export 着 `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN`，它们会压过订阅登录——`ccs use official` 会给出警告，也可以用 `eval "$(ccs use official --shell)"` 一并清理。
 
+### 项目级 provider 固定
+
+`--project` 把 provider 固定到当前目录：托管 env 写入 `./.claude/settings.local.json`。Claude Code 会把这份文件按键合并到全局 settings 之上，所以这个目录里 pin 生效，文件里其余内容（permissions、hooks、非托管 env）原样保留并继续继承全局：
+
+```bash
+ccs use glm --project          # 这个目录用 glm
+ccs use official --project     # 这个目录用 claude.ai 订阅
+ccs use --global               # 移除 pin，回归全局 settings
+```
+
+安全护栏：
+
+- 项目文件未被 git ignore 时，ccs 拒绝把 secret 写进去，并给出一行修复命令。
+- 全局 settings 里有、而被 pin 的 provider 没定义的托管键会被写成 `""`，挡住按键合并的渗透（Claude Code 把空 env 值当作未设置）。`ccs use official --project` 同样用空串覆盖认证/URL/模型核心键。
+- 在已 pin 的目录里 `ccs current` 显示项目/全局两行（pin 会反查回 provider 名）；`ccs doctor` 会报告渗透键和 gitignore 问题。
+
+项目 pin 不会动全局 active 指针；env 变更同样需要重启 Claude Code 会话才生效。
+
 ## 常用命令
 
 | 命令 | 用途 |
@@ -211,6 +229,9 @@ ccs use official
 | `ccs use <name>` | 切换 active provider，默认先 verify |
 | `ccs use <name> --no-verify` | 跳过 verify 直接切换 |
 | `ccs use official` | 切回 claude.ai 订阅（清除托管 provider env） |
+| `ccs use <name> --project` | 为当前目录固定 provider（写 `./.claude/settings.local.json`） |
+| `ccs use official --project` | 当前目录固定使用 claude.ai 订阅 |
+| `ccs use --global` | 移除项目 pin，目录回归全局 settings |
 | `ccs verify [name]` | 单独验证 provider |
 | `ccs doctor` | 本地诊断 settings、active provider、依赖和 shell secret 冲突 |
 | `ccs ls` | 列出 providers |

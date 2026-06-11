@@ -18,7 +18,12 @@ INSTALL = ROOT / "install.sh"
 
 
 def run(
-    home: Path, *args: str, input_text: str | None = None, check: bool = True, env_extra: dict[str, str] | None = None
+    home: Path,
+    *args: str,
+    input_text: str | None = None,
+    check: bool = True,
+    env_extra: dict[str, str] | None = None,
+    cwd: Path | None = None,
 ):
     env = {**os.environ, "HOME": str(home), "CCS_VERIFY_TIMEOUT": "1"}
     env.pop("ANTHROPIC_API_KEY", None)
@@ -33,6 +38,10 @@ def run(
         capture_output=True,
         text=True,
         env=env,
+        # Default the working directory to the sandbox HOME: ccs is
+        # project-aware (./.claude/settings.local.json), so inheriting the
+        # pytest cwd would leak this repository's own project pin into tests.
+        cwd=str(cwd if cwd is not None else home),
         check=False,
     )
     if check and result.returncode != 0:
@@ -1441,3 +1450,219 @@ def test_use_official_awk_fallback_without_jq(_isolate_home, tmp_path):
     data = settings(_isolate_home)
     assert data["permissions"] == {"allow": ["Bash(*)"]}
     assert data["env"] == {"CUSTOM": "x"}
+
+
+# --- project-scope switching (--project / --global) ---
+
+
+def _git_project(home: Path, name: str = "proj", ignored: bool = True) -> Path:
+    proj = home / name
+    proj.mkdir()
+    subprocess.run(["git", "init", "-q", str(proj)], check=True)
+    if ignored:
+        (proj / ".gitignore").write_text(".claude/settings.local.json\n")
+    return proj
+
+
+def project_settings(proj: Path) -> dict:
+    return json.loads((proj / ".claude/settings.local.json").read_text())
+
+
+def _seed_global_kimi(home: Path) -> None:
+    run(home, "init")
+    run(home, "set", "kimi", "--base-url", "https://kimi.example", "--key", "sk-GLOBAL")
+    run(home, "use", "kimi", "--no-verify")
+
+
+def test_use_project_pins_provider_and_leaves_global_alone(_isolate_home):
+    _seed_global_kimi(_isolate_home)
+    run(_isolate_home, "set", "glm", "--base-url", "https://glm.example", "--key", "sk-PROJ", "--use-auth-token")
+    proj = _git_project(_isolate_home)
+
+    result = run(_isolate_home, "use", "glm", "--project", "--no-verify", cwd=proj)
+
+    data = project_settings(proj)
+    assert "project pinned -> glm" in result.stdout
+    assert data["env"]["ANTHROPIC_BASE_URL"] == "https://glm.example"
+    assert data["env"]["ANTHROPIC_AUTH_TOKEN"] == "sk-PROJ"
+    # bleed-through guard: the global provider's opposite-auth secret is
+    # blanked so it cannot merge into the project session
+    assert data["env"]["ANTHROPIC_API_KEY"] == ""
+    assert settings(_isolate_home)["env"]["ANTHROPIC_BASE_URL"] == "https://kimi.example"
+    assert (_isolate_home / ".config/ccs/active").read_text().strip() == "kimi"
+
+
+def test_use_project_blanks_global_only_managed_keys(_isolate_home):
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "kimi", "--base-url", "https://kimi.example", "--key", "sk-G", "--model", "kimi-large")
+    run(_isolate_home, "use", "kimi", "--no-verify")
+    run(_isolate_home, "set", "glm", "--base-url", "https://glm.example", "--key", "sk-P")
+    proj = _git_project(_isolate_home)
+
+    run(_isolate_home, "use", "glm", "--project", "--no-verify", cwd=proj)
+
+    data = project_settings(proj)
+    assert data["env"]["ANTHROPIC_MODEL"] == ""
+    assert data["env"]["ANTHROPIC_BASE_URL"] == "https://glm.example"
+
+
+def test_use_project_refuses_when_not_gitignored(_isolate_home):
+    _seed_global_kimi(_isolate_home)
+    proj = _git_project(_isolate_home, ignored=False)
+
+    result = run(_isolate_home, "use", "kimi", "--project", "--no-verify", cwd=proj, check=False)
+
+    assert result.returncode != 0
+    assert "not git-ignored" in result.stderr
+    assert not (proj / ".claude/settings.local.json").exists()
+
+
+def test_use_project_allowed_outside_git(_isolate_home):
+    _seed_global_kimi(_isolate_home)
+    proj = _isolate_home / "plain"
+    proj.mkdir()
+
+    result = run(_isolate_home, "use", "kimi", "--project", "--no-verify", cwd=proj)
+
+    assert "project pinned -> kimi" in result.stdout
+    assert project_settings(proj)["env"]["ANTHROPIC_BASE_URL"] == "https://kimi.example"
+
+
+def test_use_project_official_blanks_core_keys(_isolate_home):
+    _seed_global_kimi(_isolate_home)
+    proj = _git_project(_isolate_home)
+
+    result = run(_isolate_home, "use", "official", "--project", cwd=proj)
+
+    data = project_settings(proj)
+    assert "project pinned -> official" in result.stdout
+    for key in ["ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL"]:
+        assert data["env"][key] == "", key
+    # global stays pinned to the provider and active marker is untouched
+    assert settings(_isolate_home)["env"]["ANTHROPIC_API_KEY"] == "sk-GLOBAL"
+    assert (_isolate_home / ".config/ccs/active").read_text().strip() == "kimi"
+
+
+def test_use_global_drops_pin_and_keeps_everything_else(_isolate_home):
+    _seed_global_kimi(_isolate_home)
+    proj = _git_project(_isolate_home)
+    run(_isolate_home, "use", "kimi", "--project", "--no-verify", cwd=proj)
+    pf = proj / ".claude/settings.local.json"
+    data = json.loads(pf.read_text())
+    data["env"]["DISABLE_COMPACT"] = "1"
+    data["model"] = "default"
+    pf.write_text(json.dumps(data))
+
+    result = run(_isolate_home, "use", "--global", cwd=proj)
+
+    data = project_settings(proj)
+    assert "project pin removed" in result.stdout
+    assert "active: kimi" in result.stdout
+    assert data["env"] == {"DISABLE_COMPACT": "1"}
+    assert data["model"] == "default"
+
+
+def test_use_global_without_project_file_is_noop(_isolate_home):
+    _seed_global_kimi(_isolate_home)
+    proj = _isolate_home / "empty"
+    proj.mkdir()
+
+    result = run(_isolate_home, "use", "--global", cwd=proj)
+
+    assert "global settings already apply" in result.stdout
+    assert not (proj / ".claude").exists()
+
+
+def test_use_global_flag_conflicts(_isolate_home):
+    both = run(_isolate_home, "use", "--global", "--project", check=False)
+    named = run(_isolate_home, "use", "kimi", "--global", check=False)
+
+    assert both.returncode != 0
+    assert "--global and --project cannot be used together" in both.stderr
+    assert named.returncode != 0
+    assert "takes no provider name" in named.stderr
+
+
+def test_current_renders_project_and_global_lines(_isolate_home):
+    _seed_global_kimi(_isolate_home)
+    run(_isolate_home, "set", "glm", "--base-url", "https://glm.example", "--key", "sk-P", "--use-auth-token")
+    proj = _git_project(_isolate_home)
+    run(_isolate_home, "use", "glm", "--project", "--no-verify", cwd=proj)
+
+    inside = run(_isolate_home, "current", cwd=proj).stdout
+    outside = run(_isolate_home, "current").stdout
+
+    assert "project: glm -> https://glm.example (.claude/settings.local.json)" in inside
+    assert "global:  kimi -> https://kimi.example" in inside
+    assert outside.strip() == "kimi -> https://kimi.example"
+
+
+def test_current_renders_official_and_unregistered_pins(_isolate_home):
+    _seed_global_kimi(_isolate_home)
+    proj = _git_project(_isolate_home)
+
+    run(_isolate_home, "use", "official", "--project", cwd=proj)
+    official_view = run(_isolate_home, "current", cwd=proj).stdout
+    assert "project: official (claude.ai subscription pin)" in official_view
+
+    run(_isolate_home, "set", "tmp", "--base-url", "https://tmp.example", "--key", "sk-T")
+    run(_isolate_home, "use", "tmp", "--project", "--no-verify", cwd=proj)
+    run(_isolate_home, "rm", "tmp")
+    unregistered_view = run(_isolate_home, "current", cwd=proj).stdout
+    assert "project: (unregistered) -> https://tmp.example" in unregistered_view
+
+
+def test_doctor_reports_project_pin_bleed_and_ignore_state(_isolate_home):
+    _seed_global_kimi(_isolate_home)
+    run(_isolate_home, "set", "glm", "--base-url", "https://glm.example", "--key", "sk-P")
+    proj = _git_project(_isolate_home)
+    run(_isolate_home, "use", "glm", "--project", "--no-verify", cwd=proj)
+
+    clean = run(_isolate_home, "doctor", cwd=proj)
+    assert "project pin (cwd): glm -> https://glm.example" in clean.stdout
+    assert "bleed" not in clean.stdout
+
+    # global later gains a managed key the pin does not cover
+    run(_isolate_home, "set", "kimi", "--model", "kimi-large")
+    run(_isolate_home, "use", "kimi", "--no-verify")
+    bleed = run(_isolate_home, "doctor", cwd=proj)
+    assert "global managed keys bleed into this project: ANTHROPIC_MODEL" in bleed.stdout
+
+    # secret present but the ignore rule disappears -> hard failure
+    (proj / ".gitignore").unlink()
+    leak = run(_isolate_home, "doctor", cwd=proj, check=False)
+    assert leak.returncode != 0
+    assert "holds a provider secret but is not git-ignored" in leak.stdout
+
+
+def test_use_project_preserves_existing_project_file(_isolate_home):
+    _seed_global_kimi(_isolate_home)
+    proj = _git_project(_isolate_home)
+    pf = proj / ".claude/settings.local.json"
+    pf.parent.mkdir(parents=True)
+    pf.write_text(
+        '{"permissions":{"allow":["Bash(ls:*)"]},"model":"default","env":{"DISABLE_COMPACT":"1","ANTHROPIC_BASE_URL":"https://old.example"}}'
+    )
+
+    run(_isolate_home, "use", "kimi", "--project", "--no-verify", cwd=proj)
+
+    data = project_settings(proj)
+    assert data["permissions"] == {"allow": ["Bash(ls:*)"]}
+    assert data["model"] == "default"
+    assert data["env"]["DISABLE_COMPACT"] == "1"
+    assert data["env"]["ANTHROPIC_BASE_URL"] == "https://kimi.example"
+    assert data["env"]["ANTHROPIC_API_KEY"] == "sk-GLOBAL"
+
+
+def test_use_project_awk_fallback_without_jq(_isolate_home, tmp_path):
+    if not _shutil_which("jq"):
+        pytest.skip("jq not installed; jq path and fallback are identical here")
+    _seed_global_kimi(_isolate_home)
+    proj = _git_project(_isolate_home)
+    nojq = _jq_free_path(tmp_path)
+
+    run(_isolate_home, "use", "kimi", "--project", "--no-verify", cwd=proj, env_extra={"PATH": nojq})
+
+    data = project_settings(proj)
+    assert data["env"]["ANTHROPIC_BASE_URL"] == "https://kimi.example"
+    assert data["env"]["ANTHROPIC_API_KEY"] == "sk-GLOBAL"

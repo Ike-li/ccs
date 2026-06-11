@@ -80,6 +80,8 @@ _ccs() {
                     _arguments \
                         '--no-verify[Skip verify request]' \
                         '--shell[Print eval-safe cleanup to stdout]' \
+                        '--project[Pin for the current directory (.claude/settings.local.json)]' \
+                        '--global[Remove the project pin; follow global settings]' \
                         ':provider:_values provider $use_targets'
                     ;;
                 verify|rm|remove)

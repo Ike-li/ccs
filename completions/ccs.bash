@@ -44,10 +44,10 @@ _ccs() {
         use)
             if [ "$cword" -eq 2 ]; then
                 # shellcheck disable=SC2207
-                COMPREPLY=( $(compgen -W "$use_targets_str" -- "$cur") )
+                COMPREPLY=( $(compgen -W "$use_targets_str --global" -- "$cur") )
             else
                 # shellcheck disable=SC2207
-                COMPREPLY=( $(compgen -W "--no-verify --shell" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--no-verify --shell --project --global" -- "$cur") )
             fi
             ;;
         verify|rm|remove)
