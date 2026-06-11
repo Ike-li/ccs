@@ -23,16 +23,25 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install pytest
-          sudo apt-get update && sudo apt-get install -y shellcheck
+          sudo apt-get update && sudo apt-get install -y shellcheck zsh
 
       - name: Validate release inputs
         run: |
           set -eu
           version=$(sed -n 's/^CCS_VERSION=//p' bin/ccs)
           test "${GITHUB_REF_NAME}" = "v${version}"
+          # install.sh ships pinned to the tag being released: a stale pin
+          # would make `curl | sh` install the previous version (or fail the
+          # checksum outright). Both defaults must match this tag's bin/ccs.
+          pinned_ref=$(sed -n 's/^ref=.{CCS_INSTALL_REF:-\(.*\)}$/\1/p' install.sh)
+          test "$pinned_ref" = "v${version}"
+          pinned_sha=$(sed -n 's/^expected_sha256=.{CCS_INSTALL_SHA256:-\(.*\)}$/\1/p' install.sh)
+          test "$pinned_sha" = "$(sha256sum bin/ccs | awk '{print $1}')"
           sh -n bin/ccs
           sh -n install.sh
           shellcheck -s sh bin/ccs install.sh
+          bash -n completions/ccs.bash
+          zsh -n completions/_ccs
           pytest tests/ -q
           unsafe='--danger'"ously-skip-permissions"
           ! git grep -n -- "$unsafe" README.md docs CONTRIBUTING.md SECURITY.md CHANGELOG.md

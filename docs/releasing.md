@@ -31,7 +31,7 @@ git tag -a v0.7.0 -m "ccs v0.7.0"
 git push origin main v0.7.0
 ```
 
-The release workflow reruns syntax checks, ShellCheck, pytest, and tracked-doc safety validation before it creates the archive from git-tracked project files:
+The release workflow validates the tag against `CCS_VERSION`, checks that the `install.sh` pinned `ref`/`expected_sha256` defaults match the tag's `bin/ccs`, reruns syntax checks (including both completion scripts), ShellCheck, pytest, and tracked-doc safety validation before it creates the archive from git-tracked project files:
 
 - `ccs-vX.Y.Z.tar.gz`
 - `ccs-vX.Y.Z.sha256`

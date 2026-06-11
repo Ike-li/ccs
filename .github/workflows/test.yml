@@ -38,6 +38,11 @@ jobs:
           sh -n bin/ccs
           sh -n install.sh
 
+      - name: Assert jq is available
+        # The suite covers both settings writers; without jq on the runner the
+        # jq-path tests would silently all become awk-path tests.
+        run: command -v jq
+
       - name: Run pytest
         run: pytest tests/ -q
 
@@ -51,15 +56,20 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install ruff and shellcheck
+      - name: Install ruff, shellcheck, and zsh
         run: |
           python -m pip install ruff
-          sudo apt-get update && sudo apt-get install -y shellcheck
+          sudo apt-get update && sudo apt-get install -y shellcheck zsh
 
       - name: Shell syntax
         run: |
           sh -n bin/ccs
           sh -n install.sh
+
+      - name: Completion syntax
+        run: |
+          bash -n completions/ccs.bash
+          zsh -n completions/_ccs
 
       - name: Shellcheck
         run: shellcheck -s sh bin/ccs install.sh
