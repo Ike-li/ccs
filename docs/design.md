@@ -80,6 +80,33 @@ whenever it is installed.
    the destination filesystem and committed with `mv` (rename, not
    copy+unlink).
 
+## Architecture: the write path
+
+The invariants above compose into one ordered pipeline. Every `ccs use`
+runs it top to bottom; a failure at any node leaves the previous
+provider fully intact, and the pre-rewrite backup bounds the blast
+radius of anything below the rewrite node.
+
+```mermaid
+flowchart TD
+    U["ccs use NAME"] --> V{"verify?"}
+    V -->|"default"| P["probe the real endpoint"]
+    V -->|"--no-verify"| BK["back up settings.json to ~/.config/ccs/backups/"]
+    P -->|"fail"| AB["abort: previous provider left intact"]
+    P -->|"ok"| BK
+    BK --> PA["parse settings.json strictly"]
+    PA -->|"cannot walk to closing brace"| RF["refuse: cannot parse, file untouched"]
+    PA -->|"ok"| RW["rewrite managed keys, commit via atomic mv"]
+    RW --> AM["update the active marker"]
+    AM -->|"write fails after rewrite"| INC["report settings/active inconsistency loudly"]
+    AM -->|"ok"| OK["switched to NAME"]
+```
+
+The same contract, read three ways: the order (verify → write → mark)
+is Invariant 1, the *refuse* and *atomic mv* nodes are Invariants 2 and
+5, and the two loud-failure leaves (`INC`, `AB`) are why a half-switch
+is never silently committed.
+
 ## Deliberate tradeoffs, kept open
 
 - **The `active` marker is stored, not derived.** `settings.json` is the
