@@ -2007,3 +2007,57 @@ def test_settings_backups_are_pruned(_isolate_home):
     backups = sorted(backups_dir.glob("settings-*.json"))
     assert len(backups) <= 10
     assert not (backups_dir / "settings-20200101-000000-1.json").exists()
+
+
+def test_use_refuses_non_object_env_with_clear_message(_isolate_home):
+    # `{"env": null}` is valid JSON, but the scanner cannot enumerate env
+    # entries from a non-object, so the rewrite is refused. The message must
+    # name the cause instead of a bare "cannot parse" on a syntactically
+    # valid file.
+    settings_file = _isolate_home / ".claude/settings.json"
+    settings_file.parent.mkdir(parents=True)
+    original = '{"permissions":{"allow":[]},"env":null}'
+    settings_file.write_text(original)
+
+    run(_isolate_home, "init")
+    run(_isolate_home, "set", "k", "--base-url", "https://k", "--key", "sk-k")
+    result = run(_isolate_home, "use", "k", "--no-verify", check=False)
+
+    assert result.returncode != 0
+    assert "cannot parse" in result.stderr
+    assert '"env" is not an object' in result.stderr
+    assert settings_file.read_text() == original
+    assert (_isolate_home / ".config/ccs/active").read_text().strip() == ""
+
+
+def test_verify_official_explains_no_endpoint(_isolate_home):
+    run(_isolate_home, "init")
+
+    explicit = run(_isolate_home, "verify", "official", check=False)
+    assert explicit.returncode != 0
+    assert "no provider endpoint to verify" in explicit.stderr
+
+    # `ccs verify` with no argument while official is active resolves to the
+    # same built-in name and must not fall through to "no such provider".
+    run(_isolate_home, "use", "official", "--no-verify")
+    active = run(_isolate_home, "verify", check=False)
+    assert active.returncode != 0
+    assert "no provider endpoint to verify" in active.stderr
+    assert "no such provider" not in active.stderr
+
+
+def test_slim_backups_are_pruned(_isolate_home):
+    if not _shutil_which("jq"):
+        pytest.skip("jq not installed; slim --apply requires jq")
+    proj = _slim_fixture(_isolate_home)
+
+    backups_dir = _isolate_home / ".config/ccs/backups"
+    backups_dir.mkdir(parents=True, exist_ok=True)
+    for i in range(12):
+        (backups_dir / f"slim-20200101-0000{i:02d}-settings.local.json").write_text("{}")
+
+    run(_isolate_home, "slim", "--apply", cwd=proj)
+
+    backups = sorted(backups_dir.glob("slim-*.json"))
+    assert len(backups) <= 10
+    assert not (backups_dir / "slim-20200101-000000-settings.local.json").exists()

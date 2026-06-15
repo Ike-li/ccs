@@ -66,6 +66,15 @@ warn() {
     printf 'warning: %s\n' "$*" >&2
 }
 
+# Shared message for every settings_parse refusal. The scanner exits non-zero
+# on input it cannot safely round-trip -- malformed or truncated JSON, a BOM
+# prefix, or a top-level "env" that is not an object -- and always leaves the
+# file untouched. One helper keeps that explanation in a single place instead
+# of a bare "cannot parse" repeated at every call site.
+cannot_parse() {
+    die "cannot parse $1: not safe to rewrite (malformed or truncated JSON, a BOM prefix, or \"env\" is not an object); left unchanged"
+}
+
 chmod_private_dir() {
     chmod 700 "$1" 2>/dev/null || warn "could not set permissions 700 on $1"
 }
@@ -119,6 +128,8 @@ Note:
   ccs slim removes project top-level keys that duplicate the global
   settings byte for byte; the per-key merge then inherits them, so the
   effective configuration does not change.
+  Switching providers removes any apiKeyHelper from settings.json (it is a
+  competing credential source); the pre-switch backup keeps it recoverable.
 EOF
 }
 
@@ -755,8 +766,8 @@ apply_provider() {
         other_tmp=$(make_temp other) || exit 1
         provider_env_tmp=$(make_temp provider-env) || exit 1
 
-        settings_parse other "$SETTINGS_FILE" >"$other_tmp" || die "cannot parse $SETTINGS_FILE"
-        settings_parse env "$SETTINGS_FILE" >"$env_tmp" || die "cannot parse $SETTINGS_FILE"
+        settings_parse other "$SETTINGS_FILE" >"$other_tmp" || cannot_parse "$SETTINGS_FILE"
+        settings_parse env "$SETTINGS_FILE" >"$env_tmp" || cannot_parse "$SETTINGS_FILE"
 
         provider_env_to_file "$provider_path" "$provider_env_tmp"
 
@@ -773,7 +784,7 @@ apply_provider() {
         if [ "${use_project:-0}" -eq 1 ]; then
             secret_key=$(secret_env_name "$auth")
             global_managed_tmp=$(make_temp global-managed) || exit 1
-            settings_parse managed "$GLOBAL_SETTINGS_FILE" >"$global_managed_tmp" || die "cannot parse $GLOBAL_SETTINGS_FILE"
+            settings_parse managed "$GLOBAL_SETTINGS_FILE" >"$global_managed_tmp" || cannot_parse "$GLOBAL_SETTINGS_FILE"
             while IFS="$TAB" read -r gkey _; do
                 [ -n "$gkey" ] || continue
                 [ "$gkey" != "$secret_key" ] || continue
@@ -800,8 +811,8 @@ clear_provider_env() {
         trap 'exit 130' HUP INT TERM
         env_tmp=$(make_temp env) || exit 1
         other_tmp=$(make_temp other) || exit 1
-        settings_parse other "$SETTINGS_FILE" >"$other_tmp" || die "cannot parse $SETTINGS_FILE"
-        settings_parse env "$SETTINGS_FILE" >"$env_tmp" || die "cannot parse $SETTINGS_FILE"
+        settings_parse other "$SETTINGS_FILE" >"$other_tmp" || cannot_parse "$SETTINGS_FILE"
+        settings_parse env "$SETTINGS_FILE" >"$env_tmp" || cannot_parse "$SETTINGS_FILE"
         write_settings_json "$other_tmp" "$env_tmp"
     ) || exit $?
 }
@@ -820,11 +831,11 @@ apply_official_project() {
         env_tmp=$(make_temp env) || exit 1
         other_tmp=$(make_temp other) || exit 1
         official_keys_tmp=$(make_temp official-keys) || exit 1
-        settings_parse other "$SETTINGS_FILE" >"$other_tmp" || die "cannot parse $SETTINGS_FILE"
-        settings_parse env "$SETTINGS_FILE" >"$env_tmp" || die "cannot parse $SETTINGS_FILE"
+        settings_parse other "$SETTINGS_FILE" >"$other_tmp" || cannot_parse "$SETTINGS_FILE"
+        settings_parse env "$SETTINGS_FILE" >"$env_tmp" || cannot_parse "$SETTINGS_FILE"
         # Staged through temp files so a parse failure dies instead of being
         # swallowed by a pipeline while the pin reports success.
-        global_managed=$(settings_parse managed "$GLOBAL_SETTINGS_FILE") || die "cannot parse $GLOBAL_SETTINGS_FILE"
+        global_managed=$(settings_parse managed "$GLOBAL_SETTINGS_FILE") || cannot_parse "$GLOBAL_SETTINGS_FILE"
         {
             [ -z "$global_managed" ] || printf '%s\n' "$global_managed" | awk -F '\t' '{ print $1 }'
             printf '%s\n%s\n%s\n%s\n' ANTHROPIC_BASE_URL "$ENV_API_KEY" "$ENV_AUTH_TOKEN" ANTHROPIC_MODEL
@@ -1889,6 +1900,9 @@ cmd_verify() {
     name=${1:-$(active_name)}
     [ -n "$name" ] || die "no provider given and no active provider"
     require_provider_name "$name"
+    if [ "$name" = "$OFFICIAL_NAME" ]; then
+        die "'$OFFICIAL_NAME' uses the claude.ai subscription login; there is no provider endpoint to verify"
+    fi
     file=$(provider_file "$name")
     [ -f "$file" ] || die "no such provider: '$name'"
     auth=$(conf_get "$file" auth)
@@ -2049,8 +2063,8 @@ cmd_slim() {
         trap 'exit 130' HUP INT TERM
         proj_other=$(make_temp slim-proj) || exit 1
         glob_other=$(make_temp slim-glob) || exit 1
-        settings_parse other "$project_file" >"$proj_other" || die "cannot parse $project_file"
-        settings_parse other "$GLOBAL_SETTINGS_FILE" >"$glob_other" || die "cannot parse $GLOBAL_SETTINGS_FILE"
+        settings_parse other "$project_file" >"$proj_other" || cannot_parse "$project_file"
+        settings_parse other "$GLOBAL_SETTINGS_FILE" >"$glob_other" || cannot_parse "$GLOBAL_SETTINGS_FILE"
 
         # Duplicate keys are printed in their raw JSON-string form (quotes
         # kept) so the jq delete below loses nothing to re-escaping.
@@ -2081,6 +2095,14 @@ cmd_slim() {
         backup_file=$backups_dir/slim-$(date +%Y%m%d-%H%M%S)-settings.local.json
         cp "$project_file" "$backup_file" || die "cannot back up $project_file"
         chmod_private_file "$backup_file"
+        # Keep only the newest 10 slim backups so repeated --apply cannot grow
+        # the backups dir without bound (mirrors backup_settings_file). The
+        # timestamped names sort chronologically, so the oldest drop first.
+        set -- "$backups_dir"/slim-*.json
+        while [ "$#" -gt 10 ]; do
+            rm -f "$1"
+            shift
+        done
 
         del_json=$(printf '%s\n' "$dup_keys" | awk '
             BEGIN { ORS = ""; print "[" }
