@@ -1,3 +1,6 @@
+# ccs ships as a single POSIX sh script (bin/ccs); this file is not a Python
+# package manifest. It only configures ruff for the Python test suite under
+# tests/, which never ships to users.
 [tool.ruff]
 line-length = 120
 target-version = "py310"
