@@ -374,7 +374,7 @@ ccs doctor
 Example output:
 
 ```text
-ccs doctor 0.7.0
+ccs doctor 0.8.0
 ok:   config dir exists: ~/.config/ccs
 ok:   providers configured: 1
 ok:   claude command found

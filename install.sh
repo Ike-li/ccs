@@ -3,8 +3,8 @@
 set -eu
 
 repo=${CCS_INSTALL_REPO:-Ike-li/ccs}
-ref=${CCS_INSTALL_REF:-v0.7.0}
-expected_sha256=${CCS_INSTALL_SHA256:-1cde59f528709bada3428c1e07f21cf84fc14f5d2b237d5290a5b051d0334cdb}
+ref=${CCS_INSTALL_REF:-v0.8.0}
+expected_sha256=${CCS_INSTALL_SHA256:-5375cde61aab49e05eb38360fc17de5c4eccaec9c18fcfc80eb1bdf0ace7231b}
 install_dir=${CCS_INSTALL_DIR:-"$HOME/.local/bin"}
 raw_base=${CCS_INSTALL_RAW_BASE:-"https://raw.githubusercontent.com/$repo/$ref"}
 

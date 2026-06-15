@@ -143,7 +143,7 @@ def test_script_is_executable_and_has_valid_shell_syntax(_isolate_home):
 def test_version_matches_release_prep(_isolate_home):
     result = run(_isolate_home, "--version")
 
-    assert result.stdout.strip() == "ccs 0.7.0"
+    assert result.stdout.strip() == "ccs 0.8.0"
 
 
 def test_init_creates_config_layout(_isolate_home):

@@ -14,7 +14,7 @@ shellcheck -s sh bin/ccs install.sh
 uv run --no-project --with pytest pytest tests/test_cli.py
 ruff check tests
 ruff format --check tests
-test "$(./bin/ccs --version)" = "ccs 0.7.0"
+test "$(./bin/ccs --version)" = "ccs 0.8.0"
 ```
 
 4. Confirm tracked docs do not contain unsafe permission-bypass examples:
@@ -27,8 +27,8 @@ unsafe='--danger'"ously-skip-permissions"
 5. Create and push a signed or annotated tag:
 
 ```bash
-git tag -a v0.7.0 -m "ccs v0.7.0"
-git push origin main v0.7.0
+git tag -a v0.8.0 -m "ccs v0.8.0"
+git push origin main v0.8.0
 ```
 
 The release workflow validates the tag against `CCS_VERSION`, checks that the `install.sh` pinned `ref`/`expected_sha256` defaults match the tag's `bin/ccs`, reruns syntax checks (including both completion scripts), ShellCheck, pytest, and tracked-doc safety validation before it creates the archive from git-tracked project files:
@@ -49,8 +49,8 @@ curl -fsSL https://raw.githubusercontent.com/Ike-li/ccs/main/install.sh | sh
 Users can override the ref only when they also provide the matching checksum:
 
 ```bash
-CCS_INSTALL_REF=v0.7.0 \
-CCS_INSTALL_SHA256=<sha256 from bin-ccs-v0.7.0.sha256> \
+CCS_INSTALL_REF=v0.8.0 \
+CCS_INSTALL_SHA256=<sha256 from bin-ccs-v0.8.0.sha256> \
 sh -c "$(curl -fsSL https://raw.githubusercontent.com/Ike-li/ccs/main/install.sh)"
 ```
 
@@ -64,8 +64,8 @@ Example formula:
 class Ccs < Formula
   desc "Tiny Claude Code provider switcher"
   homepage "https://github.com/Ike-li/ccs"
-  url "https://github.com/Ike-li/ccs/releases/download/v0.7.0/ccs-v0.7.0.tar.gz"
-  sha256 "<sha256 from ccs-v0.7.0.sha256>"
+  url "https://github.com/Ike-li/ccs/releases/download/v0.8.0/ccs-v0.8.0.tar.gz"
+  sha256 "<sha256 from ccs-v0.8.0.sha256>"
   license "GPL-3.0-only"
 
   def install

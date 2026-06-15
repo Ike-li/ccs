@@ -3,7 +3,7 @@
 set -u
 umask 077
 
-CCS_VERSION=0.7.0
+CCS_VERSION=0.8.0
 
 # An empty HOME would make the HOME-derived defaults collapse to filesystem-root
 # paths (/.config/ccs, /.claude/settings.json). set -u catches an *unset* HOME

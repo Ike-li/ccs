@@ -2,7 +2,7 @@
 
 All notable changes to `ccs` are documented here.
 
-## Unreleased
+## v0.8.0 - 2026-06-15
 
 ### Added
 
@@ -13,6 +13,10 @@ All notable changes to `ccs` are documented here.
 
 ### Fixed
 
+- Replace the bare `cannot parse` settings refusal with a message that names the cause (malformed or truncated JSON, a BOM prefix, or a top-level `env` that is not an object). A syntactically valid file such as `{"env": null}` is still refused — the scanner cannot enumerate env entries from a non-object — but now says why, and the file is left unchanged.
+- Give `ccs verify official` (and `ccs verify` while `official` is active) a clear message that the claude.ai subscription login has no provider endpoint to verify, instead of falling through to `no such provider`.
+- Prune `ccs slim` backups to the newest 10, mirroring the settings backups, so repeated `slim --apply` cannot grow `~/.config/ccs/backups/` without bound.
+- Note in `ccs --help` that switching providers removes any `apiKeyHelper` from `settings.json` (it is a competing credential source); the pre-switch backup keeps it recoverable.
 - Refuse to rewrite a settings file the parser cannot walk end to end (hand-added comments, a BOM prefix, truncation, trailing garbage): `ccs use` now fails with `cannot parse` and leaves the file untouched. Previously unparseable input was treated as empty, which let a rewrite erase every top-level key the parser could not read — silently when jq was absent.
 - Treat an empty or whitespace-only `settings.json` like an absent one: with jq installed, `ccs use` used to commit a zero-byte settings file (jq emits nothing for empty input) and still report success.
 - Create rename-target temp files on the destination filesystem so committing `settings.json`, provider files, and the active marker stays an atomic rename even when `TMPDIR` lives on another filesystem (a crash mid-copy could previously truncate the target).

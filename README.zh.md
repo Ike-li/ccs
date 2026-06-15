@@ -384,7 +384,7 @@ ccs doctor
 正常配置后大致会看到：
 
 ```text
-ccs doctor 0.7.0
+ccs doctor 0.8.0
 ok:   config dir exists: ~/.config/ccs
 ok:   providers configured: 1
 ok:   claude command found
