@@ -72,7 +72,7 @@ warn() {
 # file untouched. One helper keeps that explanation in a single place instead
 # of a bare "cannot parse" repeated at every call site.
 cannot_parse() {
-    die "cannot parse $1: not safe to rewrite (malformed or truncated JSON, a BOM prefix, or \"env\" is not an object); left unchanged"
+    die "cannot parse $1: not safe to rewrite -- it may be malformed or truncated, carry a BOM, or its top-level \"env\" is not an object; left unchanged"
 }
 
 chmod_private_dir() {
