@@ -28,3 +28,4 @@ __pycache__/
 *.bak
 *.tmp
 .lock/
+.reasonix/
