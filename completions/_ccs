@@ -26,6 +26,8 @@ _ccs() {
         'set:Create or update a provider'
         'preset:Create or update a provider from a known recipe'
         'use:Switch active provider'
+        'pin:Pin a provider for the current directory'
+        'unpin:Remove the current directory pin; follow global settings'
         'slim:Remove project keys duplicating the global settings'
         'verify:Verify a provider'
         'doctor:Diagnose local ccs and Claude Code settings'
@@ -87,6 +89,16 @@ _ccs() {
                         '--project[Pin for the current directory (.claude/settings.local.json)]' \
                         '--global[Remove the project pin; follow global settings]' \
                         ':provider:_values provider $use_targets'
+                    ;;
+                pin)
+                    _arguments \
+                        '--no-verify[Skip verify request]' \
+                        '--shell[Print eval-safe cleanup to stdout]' \
+                        ':provider:_values provider $use_targets'
+                    ;;
+                unpin)
+                    _arguments \
+                        '--shell[Print eval-safe cleanup to stdout]'
                     ;;
                 verify|rm|remove)
                     _describe 'provider' providers

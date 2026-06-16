@@ -198,21 +198,21 @@ Log in once inside Claude Code with `/login` if you have not already; switching 
 
 ### Per-project provider pinning
 
-`--project` pins a provider for the current directory by writing the managed env into `./.claude/settings.local.json`. Claude Code merges that file per key on top of your global settings, so the pin wins in this directory and everything else (permissions, hooks, non-managed env) is preserved and inherited:
+`ccs pin <name>` pins a provider for the current directory by writing the managed env into `./.claude/settings.local.json`. Claude Code merges that file per key on top of your global settings, so the pin wins in this directory and everything else (permissions, hooks, non-managed env) is preserved and inherited:
 
 ```bash
-ccs use glm --project          # this directory uses glm
-ccs use official --project     # this directory uses your claude.ai subscription
-ccs use --global               # remove the pin; follow global settings again
+ccs pin glm            # this directory uses glm
+ccs pin official       # this directory uses your claude.ai subscription
+ccs unpin              # remove the pin; follow global settings again
 ```
 
 Safety rails:
 
 - ccs refuses to write a provider secret into a project file that is not git-ignored, and prints the one-line fix.
-- Managed keys that the global settings define but the pinned provider does not are written as `""`, so they cannot bleed through the per-key merge (Claude Code treats an empty env value as unset). `ccs use official --project` blanks the auth/url/model core the same way.
+- Managed keys that the global settings define but the pinned provider does not are written as `""`, so they cannot bleed through the per-key merge (Claude Code treats an empty env value as unset). `ccs pin official` blanks the auth/url/model core the same way.
 - Inside a pinned directory `ccs current` shows both scopes, resolving the pin back to a provider name; `ccs doctor` flags bleed-through keys and gitignore problems.
 
-The global active marker is not touched by project pins, and restarting the Claude Code session is still required for env changes to apply.
+The global active marker is not touched by project pins, and restarting the Claude Code session is still required for env changes to apply. (`ccs use <name> --project` and `ccs use --global` remain as hidden aliases for `pin`/`unpin`.)
 
 ### Slimming a copied project file
 
@@ -242,9 +242,9 @@ Keys with values that differ from the global file are always kept, and the `env`
 | `ccs use <name>` | Switch active provider and verify first |
 | `ccs use <name> --no-verify` | Switch without a network request |
 | `ccs use official` | Switch back to the claude.ai subscription (clears managed provider env) |
-| `ccs use <name> --project` | Pin a provider for the current directory (`./.claude/settings.local.json`) |
-| `ccs use official --project` | Pin the claude.ai subscription for the current directory |
-| `ccs use --global` | Remove the project pin; the directory follows global settings again |
+| `ccs pin <name>` | Pin a provider for the current directory (`./.claude/settings.local.json`) |
+| `ccs pin official` | Pin the claude.ai subscription for the current directory |
+| `ccs unpin` | Remove the project pin; the directory follows global settings again |
 | `ccs slim [--apply]` | Report/remove project keys that duplicate the global settings |
 | `ccs verify [name]` | Verify a provider |
 | `ccs doctor` | Diagnose settings, active provider, dependencies, and shell conflicts |

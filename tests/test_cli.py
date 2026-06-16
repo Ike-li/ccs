@@ -1674,6 +1674,93 @@ def test_use_project_awk_fallback_without_jq(_isolate_home, tmp_path):
     assert data["env"]["ANTHROPIC_API_KEY"] == "sk-GLOBAL"
 
 
+# --- ccs pin / unpin (project verbs; thin aliases over use --project/--global) ---
+
+
+def test_pin_is_the_project_verb(_isolate_home):
+    _seed_global_kimi(_isolate_home)
+    run(_isolate_home, "set", "glm", "--base-url", "https://glm.example", "--key", "sk-P", "--use-auth-token")
+    proj = _git_project(_isolate_home)
+
+    result = run(_isolate_home, "pin", "glm", "--no-verify", cwd=proj)
+
+    data = project_settings(proj)
+    assert "project pinned -> glm" in result.stdout
+    assert data["env"]["ANTHROPIC_BASE_URL"] == "https://glm.example"
+    assert data["env"]["ANTHROPIC_AUTH_TOKEN"] == "sk-P"
+    # like `use --project`, the global active marker and settings are untouched
+    assert (_isolate_home / ".config/ccs/active").read_text().strip() == "kimi"
+    assert settings(_isolate_home)["env"]["ANTHROPIC_BASE_URL"] == "https://kimi.example"
+
+
+def test_pin_official_pins_subscription(_isolate_home):
+    _seed_global_kimi(_isolate_home)
+    proj = _git_project(_isolate_home)
+
+    result = run(_isolate_home, "pin", "official", cwd=proj)
+
+    data = project_settings(proj)
+    assert "project pinned -> official" in result.stdout
+    for key in ["ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL"]:
+        assert data["env"][key] == "", key
+
+
+def test_unpin_drops_pin_and_keeps_other_keys(_isolate_home):
+    _seed_global_kimi(_isolate_home)
+    proj = _git_project(_isolate_home)
+    run(_isolate_home, "pin", "kimi", "--no-verify", cwd=proj)
+    pf = proj / ".claude/settings.local.json"
+    data = json.loads(pf.read_text())
+    data["env"]["DISABLE_COMPACT"] = "1"
+    pf.write_text(json.dumps(data))
+
+    result = run(_isolate_home, "unpin", cwd=proj)
+
+    assert "project pin removed" in result.stdout
+    assert "active: kimi" in result.stdout
+    assert project_settings(proj)["env"] == {"DISABLE_COMPACT": "1"}
+
+
+def test_unpin_without_pin_is_noop(_isolate_home):
+    _seed_global_kimi(_isolate_home)
+    proj = _isolate_home / "empty"
+    proj.mkdir()
+
+    result = run(_isolate_home, "unpin", cwd=proj)
+
+    assert "global settings already apply" in result.stdout
+    assert not (proj / ".claude").exists()
+
+
+def test_pin_rejects_scope_flags(_isolate_home):
+    _seed_global_kimi(_isolate_home)
+    proj = _git_project(_isolate_home)
+
+    for flag in ("--project", "--global"):
+        result = run(_isolate_home, "pin", "kimi", flag, "--no-verify", cwd=proj, check=False)
+        assert result.returncode != 0
+        assert f"ccs pin already targets the current directory; drop {flag}" in result.stderr
+    assert not (proj / ".claude/settings.local.json").exists()
+
+
+def test_unpin_rejects_name_and_scope_flags(_isolate_home):
+    _seed_global_kimi(_isolate_home)
+    proj = _git_project(_isolate_home)
+
+    named = run(_isolate_home, "unpin", "kimi", cwd=proj, check=False)
+    assert named.returncode != 0
+    assert "takes no provider name" in named.stderr
+
+    for flag in ("--project", "--global"):
+        bad = run(_isolate_home, "unpin", flag, cwd=proj, check=False)
+        assert bad.returncode != 0
+        assert f"ccs unpin removes this directory's pin; drop {flag}" in bad.stderr
+
+    unknown = run(_isolate_home, "unpin", "--bogus", cwd=proj, check=False)
+    assert unknown.returncode != 0
+    assert "unknown option: --bogus" in unknown.stderr
+
+
 # --- ccs slim (dedupe project file against global settings) ---
 
 

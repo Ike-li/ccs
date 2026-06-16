@@ -21,9 +21,9 @@ CCS_DIR=${CCS_DIR:-"$HOME/.config/ccs"}
 PROVIDERS_DIR=$CCS_DIR/providers
 ACTIVE_FILE=$CCS_DIR/active
 SETTINGS_FILE=${CLAUDE_SETTINGS_FILE:-"$HOME/.claude/settings.json"}
-# cmd_use --project retargets SETTINGS_FILE at the per-project file. The
-# global path is kept separately so the bleed-through guard can still read
-# which managed keys the global settings define.
+# `ccs pin` (alias `use --project`) retargets SETTINGS_FILE at the per-project
+# file. The global path is kept separately so the bleed-through guard can still
+# read which managed keys the global settings define.
 GLOBAL_SETTINGS_FILE=$SETTINGS_FILE
 PROJECT_SETTINGS_REL=.claude/settings.local.json
 
@@ -105,9 +105,11 @@ Usage:
                  [--model M] [--opus-model M] [--sonnet-model M] [--haiku-model M]
                  [--unset-model] [-e K=V] [--unset-env K]
   ccs preset <deepseek|openrouter|kimi|hf|gateway|litellm> --key KEY [--name NAME]
-  ccs use <name> [--no-verify] [--shell] [--project]
-  ccs use official [--shell] [--project]
-  ccs use --global
+  ccs use <name> [--no-verify] [--shell]
+  ccs use official [--shell]
+  ccs pin <name> [--no-verify] [--shell]
+  ccs pin official [--shell]
+  ccs unpin
   ccs slim [--apply]
   ccs verify [name]
   ccs doctor
@@ -124,9 +126,10 @@ Note:
   'official' is built in: it removes the managed provider env so Claude Code
   uses your claude.ai subscription login instead (run /login once inside
   Claude Code).
-  --project pins a provider for the current directory by writing
-  ./.claude/settings.local.json (it must be git-ignored); 'use --global'
-  removes that pin so the directory follows the global settings again.
+  ccs pin writes a per-directory provider into ./.claude/settings.local.json
+  (it must be git-ignored); ccs unpin removes that pin so the directory
+  follows the global settings again. ('use --project' / 'use --global' are
+  kept as hidden aliases.)
   ccs slim removes project top-level keys that duplicate the global
   settings byte for byte; the per-key merge then inherits them, so the
   effective configuration does not change.
@@ -1957,6 +1960,38 @@ cmd_use() {
     fi
 }
 
+# `ccs pin <name>` is the primary verb for per-directory pinning; it forwards
+# to the shared use logic with project scope. `use <name> --project` stays as a
+# hidden alias, so the scope flags are rejected here to keep the two surfaces
+# from overlapping.
+cmd_pin() {
+    for arg do
+        case "$arg" in
+            --project|--global)
+                die "ccs pin already targets the current directory; drop $arg" ;;
+        esac
+    done
+    cmd_use --project "$@"
+}
+
+# `ccs unpin` removes the current directory's pin so it follows the global
+# settings again (hidden alias: `use --global`). It makes no network request
+# and takes no provider name.
+cmd_unpin() {
+    for arg do
+        case "$arg" in
+            --shell) ;;
+            --project|--global)
+                die "ccs unpin removes this directory's pin; drop $arg" ;;
+            --*)
+                die "unknown option: $arg" ;;
+            *)
+                die "ccs unpin takes no provider name; it removes the current directory's pin" ;;
+        esac
+    done
+    cmd_use --global "$@"
+}
+
 cmd_verify() {
     if [ "$#" -gt 1 ]; then
         die "too many arguments"
@@ -2232,6 +2267,8 @@ main() {
                 set) cmd_set "$@" ;;
                 preset) cmd_preset "$@" ;;
                 use) cmd_use "$@" ;;
+                pin) cmd_pin "$@" ;;
+                unpin) cmd_unpin "$@" ;;
                 slim) cmd_slim "$@" ;;
                 verify) cmd_verify "$@" ;;
                 doctor) cmd_doctor "$@" ;;
