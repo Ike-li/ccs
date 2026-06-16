@@ -36,10 +36,11 @@ Switch Claude Code between Anthropic-compatible providers in seconds. No proxy. 
 
 ```bash
 brew install Ike-li/tap/ccs
-ccs init
 ccs preset deepseek --key sk-...
 ccs use deepseek
 ```
+
+（不再需要先执行 `ccs init` — 配置目录会在首次使用时自动创建。）
 
 ![ccs terminal demo](docs/demo.gif)
 
@@ -74,7 +75,7 @@ curl -fsSL https://raw.githubusercontent.com/Ike-li/ccs/main/install.sh | sh
 
 - `ccs set` 逐项填写 provider：name、base URL、secret env、key、默认模型、`/model` alias 和 Claude Code 子 agent env
 - `ccs set <name> ...` 支持脚本式创建或更新
-- `ccs preset <deepseek|openrouter>` 用内置 recipe 快速创建常见 provider
+- `ccs preset <deepseek|openrouter|kimi|hf|gateway|litellm>` 用内置 recipe 快速创建常见 provider
 - `ccs use <name>` 写入 Claude Code 的 `settings.json`
 - API key / auth token 二选一，切换时自动清理另一种 secret env
 - provider 配置保存在 `~/.config/ccs/providers/<name>.conf`
@@ -137,7 +138,7 @@ cp completions/_ccs ~/.zsh/completions/_ccs
 
 ## 如何使用
 
-初始化配置目录：
+初始化配置目录（可选 — `ccs` 现在会在首次使用时自动创建）：
 
 ```bash
 ccs init
@@ -231,12 +232,16 @@ ccs slim --apply    # 删除（保留备份；需要 jq）
 
 | 命令 | 用途 |
 |---|---|
-| `ccs init` | 创建 `~/.config/ccs` |
+| `ccs init` | 创建 `~/.config/ccs`（可选，首次使用时自动创建） |
 | `ccs set [name]` | 交互式创建或更新 provider |
 | `ccs set <name> --base-url URL --key KEY` | 脚本式创建或更新 provider |
 | `ccs set <name> --use-auth-token` | 把 secret 写到 `ANTHROPIC_AUTH_TOKEN` |
 | `ccs preset deepseek --key KEY` | 用内置 DeepSeek recipe 创建 provider |
 | `ccs preset openrouter --key KEY` | 用内置 OpenRouter recipe 创建 provider |
+| `ccs preset kimi --key KEY` | 用内置 Kimi recipe 创建 provider |
+| `ccs preset hf --key KEY` | 用内置 Hugging Face recipe 创建 provider |
+| `ccs preset gateway --key KEY` | 用内置 LiteLLM/企业网关 recipe 创建 provider（占位 URL） |
+| `ccs preset litellm --key KEY` | 用内置本地 LiteLLM recipe 创建 provider（127.0.0.1:4000） |
 | `ccs use <name>` | 切换 active provider，默认先 verify |
 | `ccs use <name> --no-verify` | 跳过 verify 直接切换 |
 | `ccs use official` | 切回 claude.ai 订阅（清除托管 provider env） |
@@ -246,16 +251,16 @@ ccs slim --apply    # 删除（保留备份；需要 jq）
 | `ccs slim [--apply]` | 报告/删除项目里与全局重复的顶层键 |
 | `ccs verify [name]` | 单独验证 provider |
 | `ccs doctor` | 本地诊断 settings、active provider、依赖和 shell secret 冲突 |
-| `ccs ls` | 列出 providers |
+| `ccs ls`（alias：`list`） | 列出 providers |
 | `ccs current` | 显示 active provider |
 | `ccs show <name> [--show-key]` | 显示 provider，默认脱敏 key |
-| `ccs rm <name>` | 删除 provider；如果删的是 active，会清理 settings |
+| `ccs rm <name>`（alias：`remove`） | 删除 provider；如果删的是 active，会清理 settings |
 
 高级参数：
 
 ```bash
 ccs set <name> --model claude-sonnet-4-6
-ccs set <name> --opus-model claude-opus-4-7
+ccs set <name> --opus-model claude-opus-4-8
 ccs set <name> --sonnet-model claude-sonnet-4-6
 ccs set <name> --haiku-model claude-haiku-4-5
 ccs set <name> --unset-model
@@ -266,6 +271,20 @@ ccs set <name> --unset-env ANTHROPIC_DEFAULT_SONNET_MODEL
 ```
 
 `--unset-model` 只清理 `ANTHROPIC_MODEL`。如果要清理 Opus/Sonnet/Haiku alias、Claude Code subagent model 或 effort level，继续用 `--unset-env KEY`，这样高级模型元数据变量也保持同一套清理方式。
+
+此外，`-e` 还支持以下 `/model` 菜单自定义 env var：
+
+```bash
+ccs set <name> -e ANTHROPIC_DEFAULT_OPUS_MODEL_NAME="My Opus"
+ccs set <name> -e ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION="Fast reasoning"
+ccs set <name> -e ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES="memory"
+ccs set <name> -e ANTHROPIC_CUSTOM_MODEL_OPTION=my-model
+ccs set <name> -e ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="Custom"
+ccs set <name> -e ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION="My provider model"
+ccs set <name> -e ANTHROPIC_CUSTOM_MODEL_OPTION_SUPPORTED_CAPABILITIES="memory"
+```
+
+`ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL_{NAME,DESCRIPTION,SUPPORTED_CAPABILITIES}` 自定义 `/model` 菜单里各 slot 的显示文字；`ANTHROPIC_CUSTOM_MODEL_OPTION*` 添加第四个自定义 slot。用 `--unset-env KEY` 移除其中任意一个。`*_SUPPORTED_CAPABILITIES` 的合法值由 Claude Code 定义，参见 [Claude Code settings 文档](https://docs.anthropic.com/en/docs/claude-code/settings)。
 
 ## 脚本用法
 
@@ -323,6 +342,8 @@ printf '%s\n' 'sk-or-v1-...' | ccs set openrouter \
   active
   providers/
     kimi.conf
+  backups/
+    settings-<timestamp>.json    # 每次重写前的备份（保留最新 10 份）
 
 ~/.claude/settings.json
   env:
@@ -344,7 +365,7 @@ auth=api_key
 key=sk-...
 ANTHROPIC_BASE_URL=https://api.example.com/anthropic
 ANTHROPIC_MODEL=claude-sonnet-4-6
-ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-7
+ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-8
 ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-4-6
 ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-haiku-4-5
 CLAUDE_CODE_SUBAGENT_MODEL=claude-haiku-4-5
@@ -363,6 +384,8 @@ CLAUDE_CODE_SUBAGENT_MODEL=claude-haiku-4-5
 - base URL 不通或超时
 
 `CCS_VERIFY_TIMEOUT` 可以调整超时秒数，默认 10 秒。
+
+`CCS_VERIFY_PROBE_MODEL` 可以覆盖内置的 fallback probe model（默认：`claude-sonnet-4-6`）。
 
 探测模型优先使用 `ANTHROPIC_MODEL`，如果没配置，会依次使用 `ANTHROPIC_DEFAULT_OPUS_MODEL`、`ANTHROPIC_DEFAULT_SONNET_MODEL`、`ANTHROPIC_DEFAULT_HAIKU_MODEL`，最后才回退到内置 probe model。
 
@@ -415,7 +438,8 @@ Claude Code 启动时如果报 `Auth conflict: Both a token ... and an API key .
 
 - `~/.config/ccs/providers/*.conf` 包含 provider 明文 key
 - `~/.claude/settings.json` 包含当前 active provider 的明文 key
-- 配置文件会尽量设置为 `0600`，配置目录为 `0700`
+- `ccs` 在 `umask 077` 下创建敏感文件，并尽量将文件权限设为 `0600`、目录设为 `0700`
+- 如果所在文件系统不支持权限设置（如 FAT/exFAT），chmod 失败时 `ccs` 会在 stderr 输出警告
 - 如果 settings.json 会同步到云端或被备份，请按明文 secret 文件对待
 
 ## 项目维护

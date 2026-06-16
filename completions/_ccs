@@ -36,7 +36,10 @@ _ccs() {
         'rm:Remove a provider'
         'remove:Remove a provider'
         'help:Show usage'
+        'version:Show version'
+        '-h:Show usage'
         '--help:Show usage'
+        '-v:Show version'
         '--version:Show version'
     )
 
@@ -116,8 +119,9 @@ _ccs() {
                     _arguments \
                         '--key[Provider key (- reads stdin)]:key:' \
                         '--name[Provider name to write]:name:' \
+                        '--base-url[Override the preset base URL]:url:' \
                         '--help[Show preset help]' \
-                        ':preset:_values preset deepseek openrouter'
+                        ':preset:_values preset deepseek openrouter kimi hf gateway litellm'
                     ;;
             esac
             ;;

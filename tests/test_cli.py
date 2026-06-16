@@ -631,7 +631,7 @@ def test_set_help_uses_simple_auth_flags(_isolate_home):
 def test_top_level_help_mentions_shell_use_mode(_isolate_home):
     result = run(_isolate_home, "--help")
 
-    assert "ccs preset <deepseek|openrouter> --key KEY [--name NAME]" in result.stdout
+    assert "ccs preset <deepseek|openrouter|kimi|hf|gateway|litellm> --key KEY [--name NAME]" in result.stdout
     assert "ccs use <name> [--no-verify] [--shell]" in result.stdout
     assert "ccs doctor" in result.stdout
 

@@ -17,7 +17,7 @@ _ccs() {
         cword=$COMP_CWORD
     fi
 
-    local commands="init set preset use slim verify doctor ls list current show rm remove help --help --version -h -v"
+    local commands="init set preset use slim verify doctor ls list current show rm remove help version --help --version -h -v"
     local providers_dir="${CCS_DIR:-$HOME/.config/ccs}/providers"
     local -a providers=()
     if [ -d "$providers_dir" ]; then
@@ -88,13 +88,13 @@ _ccs() {
         preset)
             if [ "$cword" -eq 2 ]; then
                 # shellcheck disable=SC2207
-                COMPREPLY=( $(compgen -W "deepseek openrouter" -- "$cur") )
+                COMPREPLY=( $(compgen -W "deepseek openrouter kimi hf gateway litellm" -- "$cur") )
             else
                 case "$prev" in
-                    --key|--name) ;;
+                    --key|--name|--base-url) ;;
                     *)
                         # shellcheck disable=SC2207
-                        COMPREPLY=( $(compgen -W "--key --name --help" -- "$cur") )
+                        COMPREPLY=( $(compgen -W "--key --name --base-url --help" -- "$cur") )
                         ;;
                 esac
             fi

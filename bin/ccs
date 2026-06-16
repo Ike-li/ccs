@@ -104,19 +104,21 @@ Usage:
   ccs set [name] [--base-url URL] [--key KEY] [--use-api-key|--use-auth-token]
                  [--model M] [--opus-model M] [--sonnet-model M] [--haiku-model M]
                  [--unset-model] [-e K=V] [--unset-env K]
-  ccs preset <deepseek|openrouter> --key KEY [--name NAME]
+  ccs preset <deepseek|openrouter|kimi|hf|gateway|litellm> --key KEY [--name NAME]
   ccs use <name> [--no-verify] [--shell] [--project]
   ccs use official [--shell] [--project]
   ccs use --global
   ccs slim [--apply]
   ccs verify [name]
   ccs doctor
-  ccs ls
+  ccs ls|list
   ccs current
   ccs show <name> [--show-key]
-  ccs rm <name>
+  ccs rm|remove <name>
 
 Note:
+  ccs init is optional — config directories are created automatically on first
+  use of any command that needs them.
   ccs use rewrites settings.json; jq keeps nested JSON readable when available,
   otherwise the POSIX fallback minifies non-env top-level fields.
   'official' is built in: it removes the managed provider env so Claude Code
@@ -157,18 +159,23 @@ EOF
 
 preset_usage() {
     cat <<'EOF'
-Usage: ccs preset <PRESET> --key KEY [--name NAME]
+Usage: ccs preset <PRESET> --key KEY [--name NAME] [--base-url URL]
 
 Create or update a provider from a known Claude Code recipe.
 
 Presets:
   deepseek      https://api.deepseek.com/anthropic with auth token defaults
   openrouter    https://openrouter.ai/api with auth token defaults
+  kimi          https://api.kimi.com/coding/ with API key defaults
+  hf            https://router.huggingface.co with auth token defaults
+  gateway       https://litellm.example.com with auth token (placeholder; override with --base-url)
+  litellm       http://127.0.0.1:4000 with auth token (local development)
 
 Options:
-  --key KEY     provider key/token; use '-' to read from stdin
-  --name NAME   provider name to write; defaults to the preset name
-  --help        show this help
+  --key KEY        provider key/token; use '-' to read from stdin
+  --name NAME      provider name to write; defaults to the preset name
+  --base-url URL   override the preset's default base URL
+  --help           show this help
 EOF
 }
 
@@ -1002,6 +1009,14 @@ cmd_init() {
     printf 'Set a provider:   ccs set <name> --base-url <url> --key <key>\n'
 }
 
+# Ensure config directories and active marker exist. Makes explicit `ccs init`
+# optional — every command that needs a config dir just works on first run.
+ensure_active() {
+    ensure_dirs
+    [ -f "$ACTIVE_FILE" ] || : >"$ACTIVE_FILE"
+    chmod_private_file "$ACTIVE_FILE"
+}
+
 cmd_set() {
     for arg do
         case "$arg" in
@@ -1242,6 +1257,7 @@ cmd_preset() {
 
     preset_key=
     preset_name=
+    preset_base_url=
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --help)
@@ -1256,6 +1272,11 @@ cmd_preset() {
             --name)
                 [ "$#" -ge 2 ] || die "--name requires a value"
                 preset_name=$2
+                shift 2
+                ;;
+            --base-url)
+                [ "$#" -ge 2 ] || die "--base-url requires a value"
+                preset_base_url=$2
                 shift 2
                 ;;
             --*)
@@ -1277,8 +1298,9 @@ cmd_preset() {
         deepseek)
             [ -n "$preset_name" ] || preset_name=deepseek
             require_provider_name "$preset_name"
+            url=${preset_base_url:-https://api.deepseek.com/anthropic}
             cmd_set "$preset_name" \
-                --base-url "https://api.deepseek.com/anthropic" \
+                --base-url "$url" \
                 --key "$preset_key" \
                 --use-auth-token \
                 --model "deepseek-v4-pro[1m]" \
@@ -1291,14 +1313,56 @@ cmd_preset() {
         openrouter)
             [ -n "$preset_name" ] || preset_name=openrouter
             require_provider_name "$preset_name"
+            url=${preset_base_url:-https://openrouter.ai/api}
             cmd_set "$preset_name" \
-                --base-url "https://openrouter.ai/api" \
+                --base-url "$url" \
                 --key "$preset_key" \
                 --use-auth-token \
                 --opus-model "~anthropic/claude-opus-latest" \
                 --sonnet-model "~anthropic/claude-sonnet-latest" \
                 --haiku-model "~anthropic/claude-haiku-latest" \
                 -e "CLAUDE_CODE_SUBAGENT_MODEL=~anthropic/claude-opus-latest"
+            ;;
+        kimi)
+            [ -n "$preset_name" ] || preset_name=kimi
+            require_provider_name "$preset_name"
+            url=${preset_base_url:-https://api.kimi.com/coding/}
+            cmd_set "$preset_name" \
+                --base-url "$url" \
+                --key "$preset_key" \
+                --use-api-key
+            ;;
+        hf)
+            [ -n "$preset_name" ] || preset_name=hf
+            require_provider_name "$preset_name"
+            url=${preset_base_url:-https://router.huggingface.co}
+            cmd_set "$preset_name" \
+                --base-url "$url" \
+                --key "$preset_key" \
+                --use-auth-token \
+                --opus-model "zai-org/GLM-5.1" \
+                --sonnet-model "zai-org/GLM-5.1" \
+                --haiku-model "zai-org/GLM-5.1" \
+                -e "CLAUDE_CODE_SUBAGENT_MODEL=zai-org/GLM-5.1"
+            ;;
+        gateway)
+            [ -n "$preset_name" ] || preset_name=gateway
+            require_provider_name "$preset_name"
+            url=${preset_base_url:-https://litellm.example.com}
+            cmd_set "$preset_name" \
+                --base-url "$url" \
+                --key "$preset_key" \
+                --use-auth-token \
+                --model "claude-sonnet-4-6"
+            ;;
+        litellm)
+            [ -n "$preset_name" ] || preset_name=litellm
+            require_provider_name "$preset_name"
+            url=${preset_base_url:-http://127.0.0.1:4000}
+            cmd_set "$preset_name" \
+                --base-url "$url" \
+                --key "$preset_key" \
+                --use-auth-token
             ;;
         *)
             die "unknown preset: $preset"
@@ -2152,20 +2216,32 @@ main() {
         shift
     fi
     case "$cmd" in
+        -h|--help|help|-v|--version|version)
+            case "$cmd" in
+                -h|--help|help) usage ;;
+                -v|--version|version) printf 'ccs %s\n' "$CCS_VERSION" ;;
+            esac
+            ;;
         init) cmd_init "$@" ;;
-        set) cmd_set "$@" ;;
-        preset) cmd_preset "$@" ;;
-        use) cmd_use "$@" ;;
-        slim) cmd_slim "$@" ;;
-        verify) cmd_verify "$@" ;;
-        doctor) cmd_doctor "$@" ;;
-        ls|list) cmd_ls "$@" ;;
-        current) cmd_current "$@" ;;
-        show) cmd_show "$@" ;;
-        rm|remove) cmd_rm "$@" ;;
-        -h|--help|help) usage ;;
-        -v|--version|version) printf 'ccs %s\n' "$CCS_VERSION" ;;
-        *) die "unknown command: $cmd" ;;
+        *)
+            # Implicit init: ensure config dirs and active marker exist before
+            # any command that may need them. This makes `ccs init` optional —
+            # `ccs preset deepseek --key sk-...` works on a fresh install.
+            ensure_active
+            case "$cmd" in
+                set) cmd_set "$@" ;;
+                preset) cmd_preset "$@" ;;
+                use) cmd_use "$@" ;;
+                slim) cmd_slim "$@" ;;
+                verify) cmd_verify "$@" ;;
+                doctor) cmd_doctor "$@" ;;
+                ls|list) cmd_ls "$@" ;;
+                current) cmd_current "$@" ;;
+                show) cmd_show "$@" ;;
+                rm|remove) cmd_rm "$@" ;;
+                *) die "unknown command: $cmd" ;;
+            esac
+            ;;
     esac
 }
 

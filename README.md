@@ -36,10 +36,11 @@ Homebrew is the recommended install path:
 
 ```bash
 brew install Ike-li/tap/ccs
-ccs init
 ccs preset deepseek --key sk-...
 ccs use deepseek
 ```
+
+(`ccs init` is no longer required — config directories are created automatically on first use.)
 
 ![ccs terminal demo](docs/demo.gif)
 
@@ -73,7 +74,7 @@ More tradeoffs are in [docs/compare.md](docs/compare.md).
 ## Features
 
 - `ccs set` creates providers interactively or from flags.
-- `ccs preset <deepseek|openrouter>` creates common provider recipes.
+- `ccs preset <deepseek|openrouter|kimi|hf|gateway|litellm>` creates common provider recipes.
 - `ccs use <name>` writes Claude Code's `settings.json`.
 - API key and bearer token modes are mutually exclusive; switching removes the stale managed secret env.
 - Provider config lives in `~/.config/ccs/providers/<name>.conf`.
@@ -132,7 +133,7 @@ cp completions/_ccs ~/.zsh/completions/_ccs
 
 ## Usage
 
-Initialize the config directory:
+Initialize the config directory (optional — `ccs` now creates it automatically on first use):
 
 ```bash
 ccs init
@@ -228,12 +229,16 @@ Keys with values that differ from the global file are always kept, and the `env`
 
 | Command | Purpose |
 |---|---|
-| `ccs init` | Create `~/.config/ccs` |
+| `ccs init` | Create `~/.config/ccs` (optional; auto-created on first use) |
 | `ccs set [name]` | Create or update a provider interactively |
 | `ccs set <name> --base-url URL --key KEY` | Create or update from flags |
 | `ccs set <name> --use-auth-token` | Store the secret as `ANTHROPIC_AUTH_TOKEN` |
 | `ccs preset deepseek --key KEY` | Create the DeepSeek recipe |
 | `ccs preset openrouter --key KEY` | Create the OpenRouter recipe |
+| `ccs preset kimi --key KEY` | Create the Kimi recipe |
+| `ccs preset hf --key KEY` | Create the Hugging Face recipe |
+| `ccs preset gateway --key KEY` | Create a LiteLLM/gateway recipe (placeholder URL) |
+| `ccs preset litellm --key KEY` | Create a local LiteLLM recipe (127.0.0.1:4000) |
 | `ccs use <name>` | Switch active provider and verify first |
 | `ccs use <name> --no-verify` | Switch without a network request |
 | `ccs use official` | Switch back to the claude.ai subscription (clears managed provider env) |
@@ -243,16 +248,16 @@ Keys with values that differ from the global file are always kept, and the `env`
 | `ccs slim [--apply]` | Report/remove project keys that duplicate the global settings |
 | `ccs verify [name]` | Verify a provider |
 | `ccs doctor` | Diagnose settings, active provider, dependencies, and shell conflicts |
-| `ccs ls` | List providers |
+| `ccs ls` (`list`) | List providers |
 | `ccs current` | Show active provider |
 | `ccs show <name> [--show-key]` | Show provider details; keys are masked by default |
-| `ccs rm <name>` | Remove a provider; active removal clears managed settings env |
+| `ccs rm <name>` (`remove`) | Remove a provider; active removal clears managed settings env |
 
 Advanced model and env options:
 
 ```bash
 ccs set <name> --model claude-sonnet-4-6
-ccs set <name> --opus-model claude-opus-4-7
+ccs set <name> --opus-model claude-opus-4-8
 ccs set <name> --sonnet-model claude-sonnet-4-6
 ccs set <name> --haiku-model claude-haiku-4-5
 ccs set <name> --unset-model
@@ -263,6 +268,20 @@ ccs set <name> --unset-env ANTHROPIC_DEFAULT_SONNET_MODEL
 ```
 
 `--unset-model` only removes `ANTHROPIC_MODEL`. Use `--unset-env KEY` for Opus/Sonnet/Haiku aliases, Claude Code subagent model, and effort level.
+
+Additional env vars for `/model` menu customization are also supported with `-e`:
+
+```bash
+ccs set <name> -e ANTHROPIC_DEFAULT_OPUS_MODEL_NAME="My Opus"
+ccs set <name> -e ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION="Fast reasoning"
+ccs set <name> -e ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES="memory"
+ccs set <name> -e ANTHROPIC_CUSTOM_MODEL_OPTION=my-model
+ccs set <name> -e ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="Custom"
+ccs set <name> -e ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION="My provider model"
+ccs set <name> -e ANTHROPIC_CUSTOM_MODEL_OPTION_SUPPORTED_CAPABILITIES="memory"
+```
+
+`ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL_{NAME,DESCRIPTION,SUPPORTED_CAPABILITIES}` customize the display text for each model slot in the `/model` menu. `ANTHROPIC_CUSTOM_MODEL_OPTION*` adds a fourth custom slot. Use `--unset-env KEY` to remove any of them. The valid strings for `*_SUPPORTED_CAPABILITIES` are defined by Claude Code — see [Claude Code settings documentation](https://docs.anthropic.com/en/docs/claude-code/settings) for current values.
 
 ## Scripted Examples
 
@@ -313,6 +332,8 @@ printf '%s\n' 'sk-or-v1-...' | ccs set openrouter \
   active
   providers/
     kimi.conf
+  backups/
+    settings-<timestamp>.json    # pre-rewrite backups, newest 10 kept
 
 ~/.claude/settings.json
   env:
@@ -334,7 +355,7 @@ auth=api_key
 key=sk-...
 ANTHROPIC_BASE_URL=https://api.example.com/anthropic
 ANTHROPIC_MODEL=claude-sonnet-4-6
-ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-7
+ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-8
 ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-4-6
 ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-haiku-4-5
 CLAUDE_CODE_SUBAGENT_MODEL=claude-haiku-4-5
@@ -351,6 +372,8 @@ When writing settings, `ccs` removes managed provider env values and the legacy 
 - unreachable base URLs and timeouts
 
 `CCS_VERIFY_TIMEOUT` changes the timeout in seconds. The default is 10.
+
+`CCS_VERIFY_PROBE_MODEL` overrides the built-in fallback probe model (default: `claude-sonnet-4-6`).
 
 The probe model uses `ANTHROPIC_MODEL` first, then `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`, and finally the built-in probe model.
 
