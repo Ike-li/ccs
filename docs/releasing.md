@@ -12,8 +12,8 @@ This project is a single POSIX shell script plus completions and docs. Releases 
 sh -n bin/ccs install.sh
 shellcheck -s sh bin/ccs install.sh
 uv run --no-project --with pytest pytest tests/test_cli.py
-ruff check tests
-ruff format --check tests
+uv run --no-project --with ruff ruff check tests
+uv run --no-project --with ruff ruff format --check tests
 test "$(./bin/ccs --version)" = "ccs 0.8.0"
 ```
 

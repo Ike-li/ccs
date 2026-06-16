@@ -50,7 +50,7 @@ empirically and they dictate the architecture:
 | **Rewrite the managed keys inside `settings.json`** | The only persistent location Claude Code natively reads for all of base URL, secret, and model mapping — while coexisting with config ccs does not own. |
 
 The cost of the winning option is that ccs must read and rewrite JSON
-reliably from POSIX sh. That tradeoff — a ~170-line awk JSON scanner — is
+reliably from POSIX sh. That tradeoff — a ~200-line awk JSON scanner — is
 the project's main complexity and its main risk surface, which is why the
 scanner refuses to rewrite anything it cannot walk end to end, every
 rewrite is backed up to `~/.config/ccs/backups/`, and `jq` is preferred
